@@ -1,5 +1,6 @@
 package com.example.config;
 
+import com.example.common.MessageConstants;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -51,7 +52,7 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .headers(headers -> headers
                 .frameOptions(frameOptions -> frameOptions.deny())
-                .contentTypeOptions(contentTypeOptions -> contentTypeOptions.and())
+                .contentTypeOptions(contentTypeOptions -> {})
                 .httpStrictTransportSecurity(hstsConfig -> hstsConfig
                     .maxAgeInSeconds(31536000)
                 )
@@ -66,12 +67,24 @@ public class SecurityConfig {
                 .authenticationEntryPoint((request, response, authException) -> {
                     response.setStatus(401);
                     response.setContentType("application/json");
-                    response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"Authentication required\"}");
+                    String errorJson = String.format(
+                        "{\"error\":\"%s\",\"message\":\"%s\",\"timestamp\":%d}",
+                        MessageConstants.UNAUTHORIZED,
+                        MessageConstants.AUTHENTICATION_REQUIRED,
+                        System.currentTimeMillis()
+                    );
+                    response.getWriter().write(errorJson);
                 })
                 .accessDeniedHandler((request, response, accessDeniedException) -> {
                     response.setStatus(403);
                     response.setContentType("application/json");
-                    response.getWriter().write("{\"error\":\"Forbidden\",\"message\":\"Access denied\"}");
+                    String errorJson = String.format(
+                        "{\"error\":\"%s\",\"message\":\"%s\",\"timestamp\":%d}",
+                        MessageConstants.FORBIDDEN,
+                        MessageConstants.ACCESS_DENIED,
+                        System.currentTimeMillis()
+                    );
+                    response.getWriter().write(errorJson);
                 })
             );
         

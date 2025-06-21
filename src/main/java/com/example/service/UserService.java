@@ -1,17 +1,13 @@
 package com.example.service;
 
+import com.example.common.ApiResponse;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.UserDTO;
 
-import java.util.List;
-
 public interface UserService {
-    LoginResponseDTO login(LoginRequestDTO loginRequest);
-    UserDTO register(UserDTO userDTO) throws InterruptedException;
-    List<UserDTO> getAllUsers();
+    ApiResponse<LoginResponseDTO> login(LoginRequestDTO loginRequest);
+    ApiResponse<Void> register(UserDTO userDTO) throws InterruptedException;
     UserDTO getUserById(String userId);
-    UserDTO createUser(UserDTO userDTO) throws InterruptedException;
     UserDTO updateUser(String userId, UserDTO userDTO);
-    void deleteUser(String userId);
 } 

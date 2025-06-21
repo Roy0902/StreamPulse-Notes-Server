@@ -1,9 +1,9 @@
 package com.example.config;
 
 import com.example.common.JwtUtil;
+import com.example.common.MessageConstants;
 import com.example.entity.User;
 import com.example.repository.UserRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,8 +19,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -28,7 +26,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
-    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(
@@ -45,17 +42,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
             return;
         }
-
+        
         jwt = authHeader.substring(7);
         
         try {
             username = jwtUtil.extractUsername(jwt);
             
             if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-
+                
                 User user = userRepository.findByUsername(username);
                 if (user == null) {
-                    sendErrorResponse(response, 401, "User not found");
+                    sendErrorResponse(response, 401, MessageConstants.USER_NOT_FOUND_AUTH);
                     return;
                 }
                 
@@ -72,14 +69,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 } else {
-                    sendErrorResponse(response, 401, "Invalid or expired token");
+                    sendErrorResponse(response, 401, MessageConstants.INVALID_TOKEN);
                     return;
                 }
             }
         } catch (Exception e) {
-            // JWT parsing or validation error
             logger.error("JWT token validation failed", e);
-            sendErrorResponse(response, 401, "Malformed token");
+            sendErrorResponse(response, 401, MessageConstants.MALFORMED_TOKEN);
             return;
         }
         
@@ -90,12 +86,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         
-        Map<String, Object> errorResponse = new HashMap<>();
-        errorResponse.put("error", status == 401 ? "Unauthorized" : "Forbidden");
-        errorResponse.put("message", message);
-        errorResponse.put("timestamp", System.currentTimeMillis());
+        String errorJson = String.format(
+            "{\"code\":%d,\"message\":\"%s\",\"data\":null}",
+            status,
+            message
+        );
         
-        objectMapper.writeValue(response.getWriter(), errorResponse);
+        response.getWriter().write(errorJson);
     }
     
     private UserDetails createUserDetails(User user) {

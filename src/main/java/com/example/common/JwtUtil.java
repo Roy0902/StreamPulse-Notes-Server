@@ -19,7 +19,8 @@ public class JwtUtil {
     private static final SecretKey key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes());
     
     private static final long ACCESS_TOKEN_VALIDITY = 15 * 60 * 1000; // 15 minutes
-    private static final long REFRESH_TOKEN_VALIDITY = 7 * 24 * 60 * 60 * 1000; // 7 days
+    private static final long REFRESH_TOKEN_VALIDITY = 12 * 60 * 60 * 1000; // 12 hours
+    private static final long REMEMBER_ME_REFRESH_TOKEN_VALIDITY = 5 * 24 * 60 * 60 * 1000; // 5 days
 
     public static String generateToken(String username, String email) {
         return generateToken(username, email, ACCESS_TOKEN_VALIDITY);
@@ -27,6 +28,11 @@ public class JwtUtil {
 
     public static String generateRefreshToken(String username, String email) {
         return generateToken(username, email, REFRESH_TOKEN_VALIDITY);
+    }
+
+    public static String generateRefreshToken(String username, String email, boolean rememberMe) {
+        long validity = rememberMe ? REMEMBER_ME_REFRESH_TOKEN_VALIDITY : REFRESH_TOKEN_VALIDITY;
+        return generateToken(username, email, validity);
     }
 
     private static String generateToken(String username, String email, long validity) {

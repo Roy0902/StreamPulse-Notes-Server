@@ -8,13 +8,12 @@ import com.example.repository.UserRepository;
 import com.example.repository.VideoLibraryRepository;
 import com.example.repository.VideoRepository;
 import com.example.service.VideoLibraryService;
-import com.github.rholder.fauxflake.IdGenerators;
-import com.github.rholder.fauxflake.api.IdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,7 +22,6 @@ public class VideoLibraryServiceImpl implements VideoLibraryService {
     private final VideoLibraryRepository libraryRepository;
     private final UserRepository userRepository;
     private final VideoRepository videoRepository;
-    private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
     @Override
     public List<VideoLibraryDTO> getAllLibraries() {
@@ -46,12 +44,7 @@ public class VideoLibraryServiceImpl implements VideoLibraryService {
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         VideoLibrary library = new VideoLibrary();
-        try {
-            library.setLibraryId(snowflake.generateId(1000).asString());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Failed to generate library ID", e);
-        }
+        library.setLibraryId(UUID.randomUUID().toString());
         library.setName(libraryDTO.getName());
         library.setDescription(libraryDTO.getDescription());
         library.setIsPublic(libraryDTO.getIsPublic() != null ? libraryDTO.getIsPublic() : false);

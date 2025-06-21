@@ -6,13 +6,12 @@ import com.example.entity.Video;
 import com.example.repository.UserRepository;
 import com.example.repository.VideoRepository;
 import com.example.service.VideoService;
-import com.github.rholder.fauxflake.IdGenerators;
-import com.github.rholder.fauxflake.api.IdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -20,7 +19,6 @@ import java.util.stream.Collectors;
 public class VideoServiceImpl implements VideoService {
     private final VideoRepository videoRepository;
     private final UserRepository userRepository;
-    private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
     @Override
     public List<VideoDTO> getAllVideos() {
@@ -43,12 +41,7 @@ public class VideoServiceImpl implements VideoService {
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         Video video = new Video();
-        try {
-            video.setVideoId(snowflake.generateId(1000).asString());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Failed to generate video ID", e);
-        }
+        video.setVideoId(UUID.randomUUID().toString());
         video.setTitle(videoDTO.getTitle());
         video.setDescription(videoDTO.getDescription());
         video.setUrl(videoDTO.getUrl());

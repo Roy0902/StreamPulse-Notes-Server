@@ -8,14 +8,13 @@ import com.example.repository.UserRepository;
 import com.example.repository.VideoRepository;
 import com.example.repository.WatchHistoryRepository;
 import com.example.service.WatchHistoryService;
-import com.github.rholder.fauxflake.IdGenerators;
-import com.github.rholder.fauxflake.api.IdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -24,7 +23,6 @@ public class WatchHistoryServiceImpl implements WatchHistoryService {
     private final WatchHistoryRepository historyRepository;
     private final UserRepository userRepository;
     private final VideoRepository videoRepository;
-    private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
     @Override
     public List<WatchHistoryDTO> getAllHistory() {
@@ -49,12 +47,7 @@ public class WatchHistoryServiceImpl implements WatchHistoryService {
                 .orElseThrow(() -> new RuntimeException("Video not found"));
 
         WatchHistory history = new WatchHistory();
-        try {
-            history.setHistoryId(snowflake.generateId(1000).asString());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Failed to generate history ID", e);
-        }
+        history.setHistoryId(UUID.randomUUID().toString());
         history.setUser(user);
         history.setVideo(video);
         history.setProgress(historyDTO.getProgress() != null ? historyDTO.getProgress() : 0);
@@ -105,12 +98,7 @@ public class WatchHistoryServiceImpl implements WatchHistoryService {
                             .orElseThrow(() -> new RuntimeException("Video not found"));
 
                     WatchHistory newHistory = new WatchHistory();
-                    try {
-                        newHistory.setHistoryId(snowflake.generateId(1000).asString());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException("Failed to generate history ID", e);
-                    }
+                    newHistory.setHistoryId(UUID.randomUUID().toString());
                     newHistory.setUser(user);
                     newHistory.setVideo(video);
                     newHistory.setProgress(0);

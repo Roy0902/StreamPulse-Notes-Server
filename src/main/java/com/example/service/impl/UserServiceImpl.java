@@ -1,22 +1,21 @@
 package com.example.service.impl;
 
+import com.example.common.ApiResponse;
 import com.example.common.JwtUtil;
+import com.example.common.MessageConstants;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.UserDTO;
 import com.example.entity.User;
 import com.example.repository.UserRepository;
 import com.example.service.UserService;
+import lombok.RequiredArgsConstructor;
 import com.github.rholder.fauxflake.IdGenerators;
 import com.github.rholder.fauxflake.api.IdGenerator;
-import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -26,40 +25,37 @@ public class UserServiceImpl implements UserService {
     private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
     @Override
-    public LoginResponseDTO login(LoginRequestDTO loginRequest) {
+    public ApiResponse<LoginResponseDTO> login(LoginRequestDTO loginRequest) {
         User user = userRepository.findByEmail(loginRequest.getEmail());
 
         if (user == null) {
-            LoginResponseDTO response = new LoginResponseDTO();
-            response.setStatusCode(401);
-            response.setMessage("Invalid email or password");
-            return response;
+            return ApiResponse.error(401, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
         }
         
         if (!passwordEncoder.matches(loginRequest.getPassword(), user.getPasswordHash())) {
-            LoginResponseDTO response = new LoginResponseDTO();
-            response.setStatusCode(401);
-            response.setMessage("Invalid email or password");
-            return response;
+            return ApiResponse.error(401, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
         }
         
-        LoginResponseDTO response = new LoginResponseDTO();
-        response.setStatusCode(201);
-        response.setToken(JwtUtil.generateToken(user.getUsername(), user.getEmail()));
-        response.setRefreshToken(JwtUtil.generateRefreshToken(user.getUsername(), user.getEmail()));
-        response.setMessage("Login successful");
+        LoginResponseDTO loginData = new LoginResponseDTO();
+        loginData.setToken(JwtUtil.generateToken(user.getUsername(), user.getEmail()));
+        loginData.setRefreshToken(JwtUtil.generateRefreshToken(user.getUsername(), user.getEmail(), loginRequest.isRememberMe()));
         
-        return response;
+        String successMessage = loginRequest.isRememberMe() 
+            ? MessageConstants.LOGIN_SUCCESSFUL_REMEMBER_ME 
+            : MessageConstants.LOGIN_SUCCESSFUL;
+        
+        return ApiResponse.success(successMessage, loginData);
     }
 
     @Override
     @Transactional
-    public UserDTO register(UserDTO userDTO) throws InterruptedException {
+    public ApiResponse<Void> register(UserDTO userDTO) throws InterruptedException {
         try {
             User existingUser = userRepository.findByEmail(userDTO.getEmail());
             if (existingUser != null) {
-                return null;
+                return ApiResponse.error(400, MessageConstants.EMAIL_ALREADY_EXISTS);
             }
+            
             User user = new User();
             String userId = snowflake.generateId(1000).asString();
             user.setUserId(userId);
@@ -69,54 +65,27 @@ public class UserServiceImpl implements UserService {
             user.setProvider(userDTO.getProvider());
             user.setProviderId(userDTO.getProviderId());
             user.setStatus(User.Status.normal);
-            User savedUser = userRepository.save(user);
-            UserDTO response = new UserDTO();
-            response.setUserId(savedUser.getUserId());
-            response.setUsername(savedUser.getUsername());
-            response.setEmail(savedUser.getEmail());
-            response.setProvider(savedUser.getProvider());
-            response.setProviderId(savedUser.getProviderId());
-            response.setStatus(savedUser.getStatus().name());
-            return response;
-        } catch (InterruptedException e) {
-            throw new InterruptedException("Registration failed: " + e.getMessage());
-        }
-    }
 
-    @Override
-    public List<UserDTO> getAllUsers() {
-        return userRepository.findAll().stream()
-                .map(this::convertToDTO)
-                .collect(Collectors.toList());
+            userRepository.save(user);
+            return ApiResponse.success(MessageConstants.REGISTRATION_SUCCESSFUL);
+
+        } catch (InterruptedException e) {
+            throw new InterruptedException(MessageConstants.REGISTRATION_FAILED + ": " + e.getMessage());
+        }
     }
 
     @Override
     public UserDTO getUserById(String userId) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new RuntimeException(String.format(MessageConstants.USER_NOT_FOUND, userId)));
         return convertToDTO(user);
-    }
-
-    @Override
-    @Transactional
-    public UserDTO createUser(UserDTO userDTO) throws InterruptedException {
-        User user = new User();
-        String userId = snowflake.generateId(1000).asString();
-        user.setUserId(userId);
-        user.setUsername(userDTO.getUsername());
-        user.setEmail(userDTO.getEmail());
-        user.setPasswordHash(passwordEncoder.encode(userDTO.getPasswordHash()));
-        user.setProvider(userDTO.getProvider());
-        user.setProviderId(userDTO.getProviderId());
-        user.setStatus(User.Status.normal);
-        return convertToDTO(userRepository.save(user));
     }
 
     @Override
     @Transactional
     public UserDTO updateUser(String userId, UserDTO userDTO) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new RuntimeException(String.format(MessageConstants.USER_NOT_FOUND, userId)));
         
         user.setUsername(userDTO.getUsername());
         user.setEmail(userDTO.getEmail());
@@ -127,12 +96,6 @@ public class UserServiceImpl implements UserService {
         user.setProviderId(userDTO.getProviderId());
         
         return convertToDTO(userRepository.save(user));
-    }
-
-    @Override
-    @Transactional
-    public void deleteUser(String userId) {
-        userRepository.deleteById(userId);
     }
 
     private UserDTO convertToDTO(User user) {

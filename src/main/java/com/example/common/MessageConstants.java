@@ -11,6 +11,23 @@ public final class MessageConstants {
     public static final String SERVER_ERROR = "Internal server error";
     public static final String BAD_REQUEST = "Invalid request";
 
+    // Authentication messages
+    public static final String UNAUTHORIZED = "Unauthorized";
+    public static final String FORBIDDEN = "Forbidden";
+    public static final String AUTHENTICATION_REQUIRED = "Authentication required";
+    public static final String ACCESS_DENIED = "Access denied";
+    public static final String INVALID_TOKEN = "Invalid or expired token";
+    public static final String MALFORMED_TOKEN = "Malformed token";
+    public static final String USER_NOT_FOUND_AUTH = "User not found";
+    
+    // Specific authentication messages
+    public static final String INVALID_EMAIL_OR_PASSWORD = "Invalid email or password";
+    public static final String LOGIN_SUCCESSFUL = "Login successful";
+    public static final String LOGIN_SUCCESSFUL_REMEMBER_ME = "Login successful - Remember me enabled";
+    public static final String REGISTRATION_SUCCESSFUL = "Registration successful";
+    public static final String EMAIL_ALREADY_EXISTS = "Email already exists";
+    public static final String REGISTRATION_FAILED = "Registration failed";
+
     // User messages
     public static final String USER_CREATED = "User created successfully";
     public static final String USER_UPDATED = "User updated successfully";
