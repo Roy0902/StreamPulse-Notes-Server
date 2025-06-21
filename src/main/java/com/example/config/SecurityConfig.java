@@ -1,6 +1,8 @@
 package com.example.config;
 
 import com.example.common.MessageConstants;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -15,12 +17,16 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+    private static final Logger logger = LoggerFactory.getLogger(SecurityConfig.class);
+    private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final JwtAuthenticationFilter jwtAuthFilter;
 
@@ -65,6 +71,10 @@ public class SecurityConfig {
             )
             .exceptionHandling(exceptionHandling -> exceptionHandling
                 .authenticationEntryPoint((request, response, authException) -> {
+                    String timestamp = LocalDateTime.now().format(formatter);
+                    logger.warn("[{}] Authentication required - URI: {}, Method: {}, IP: {}, Error: {}", 
+                               timestamp, request.getRequestURI(), request.getMethod(), getClientIP(request), authException.getMessage());
+                    
                     response.setStatus(401);
                     response.setContentType("application/json");
                     String errorJson = String.format(
@@ -76,6 +86,10 @@ public class SecurityConfig {
                     response.getWriter().write(errorJson);
                 })
                 .accessDeniedHandler((request, response, accessDeniedException) -> {
+                    String timestamp = LocalDateTime.now().format(formatter);
+                    logger.warn("[{}] Access denied - URI: {}, Method: {}, IP: {}, Error: {}", 
+                               timestamp, request.getRequestURI(), request.getMethod(), getClientIP(request), accessDeniedException.getMessage());
+                    
                     response.setStatus(403);
                     response.setContentType("application/json");
                     String errorJson = String.format(
@@ -128,5 +142,19 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12); 
+    }
+    
+    private String getClientIP(jakarta.servlet.http.HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty() && !"unknown".equalsIgnoreCase(xForwardedFor)) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        
+        String xRealIP = request.getHeader("X-Real-IP");
+        if (xRealIP != null && !xRealIP.isEmpty() && !"unknown".equalsIgnoreCase(xRealIP)) {
+            return xRealIP;
+        }
+        
+        return request.getRemoteAddr();
     }
 } 

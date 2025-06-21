@@ -9,6 +9,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -18,11 +20,15 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+    private static final Logger logger = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+    private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
@@ -52,6 +58,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 
                 User user = userRepository.findByUsername(username);
                 if (user == null) {
+                    String timestamp = LocalDateTime.now().format(formatter);
+                    logger.warn("[{}] JWT authentication failed - Username: {}, Reason: User not found, IP: {}", 
+                               timestamp, username, getClientIP(request));
                     sendErrorResponse(response, 401, MessageConstants.USER_NOT_FOUND_AUTH);
                     return;
                 }
@@ -69,12 +78,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 } else {
+                    String timestamp = LocalDateTime.now().format(formatter);
+                    logger.warn("[{}] JWT authentication failed - Username: {}, Reason: Invalid token, IP: {}", 
+                               timestamp, username, getClientIP(request));
                     sendErrorResponse(response, 401, MessageConstants.INVALID_TOKEN);
                     return;
                 }
             }
         } catch (Exception e) {
-            logger.error("JWT token validation failed", e);
+            String timestamp = LocalDateTime.now().format(formatter);
+            logger.error("[{}] JWT token validation system error - IP: {}, Error: {}", 
+                        timestamp, getClientIP(request), e.getMessage(), e);
             sendErrorResponse(response, 401, MessageConstants.MALFORMED_TOKEN);
             return;
         }
@@ -104,5 +118,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 .credentialsExpired(false)
                 .disabled(false)
                 .build();
+    }
+    
+    private String getClientIP(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty() && !"unknown".equalsIgnoreCase(xForwardedFor)) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        
+        String xRealIP = request.getHeader("X-Real-IP");
+        if (xRealIP != null && !xRealIP.isEmpty() && !"unknown".equalsIgnoreCase(xRealIP)) {
+            return xRealIP;
+        }
+        
+        return request.getRemoteAddr();
     }
 } 
