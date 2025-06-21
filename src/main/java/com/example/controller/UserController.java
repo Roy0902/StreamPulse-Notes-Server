@@ -23,7 +23,7 @@ public class UserController {
         return ResponseEntity.status(response.getCode()).body(response);
     }
 
-    @PostMapping("/register")
+    @PostMapping("/signup")
     public ResponseEntity<ApiResponse<Void>> register(@Valid @RequestBody UserDTO userDTO) {
         try {
             ApiResponse<Void> response = userService.register(userDTO);
