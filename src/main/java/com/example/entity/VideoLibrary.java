@@ -1,39 +1,50 @@
-package com.example.model;
+package com.example.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
-@Data
 @Entity
-@Table(name = "video_library")
+@Table(name = "video_libraries")
+@Data
+@EntityListeners(AuditingEntityListener.class)
 public class VideoLibrary {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "library_id")
-    private Long libraryId;
+    @Column(name = "library_id", length = 30)
+    private String libraryId;
 
-    @Column(name = "user_id", length = 30, nullable = false)
-    private String userId;
+    @Column(name = "name", nullable = false, length = 100)
+    private String name;
 
-    @ManyToOne
-    @JoinColumn(name = "video_id", nullable = false)
-    private Video video;
+    @Column(name = "description", columnDefinition = "TEXT")
+    private String description;
 
-    @Column(name = "status", length = 20)
-    private String status = "unwatched";
+    @Column(name = "is_public", nullable = false)
+    private Boolean isPublic = false;
 
-    @Column(name = "progress")
-    private Integer progress = 0;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
-    @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @ManyToMany
+    @JoinTable(
+        name = "library_videos",
+        joinColumns = @JoinColumn(name = "library_id"),
+        inverseJoinColumns = @JoinColumn(name = "video_id")
+    )
+    private List<Video> videos = new ArrayList<>();
+
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @UpdateTimestamp
+    @LastModifiedDate
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 } 

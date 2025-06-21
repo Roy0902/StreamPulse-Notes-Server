@@ -1,86 +1,93 @@
 package com.example.controller;
 
+import com.example.common.ApiResponse;
 import com.example.dto.VideoLibraryDTO;
 import com.example.service.VideoLibraryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/library")
+@RequestMapping("/api/libraries")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class VideoLibraryController {
-    private final VideoLibraryService videoLibraryService;
+    private final VideoLibraryService libraryService;
 
-    @GetMapping("/user/{userId}")
-    public ResponseEntity<List<VideoLibraryDTO>> getUserLibrary(@PathVariable String userId) {
-        try {
-            List<VideoLibraryDTO> library = videoLibraryService.getUserLibrary(userId);
-            return ResponseEntity.ok(library);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<VideoLibraryDTO>>> getAllLibraries() {
+        List<VideoLibraryDTO> libraries = libraryService.getAllLibraries();
+        return ResponseEntity.ok(ApiResponse.success("Libraries retrieved successfully", libraries));
     }
 
-    @PostMapping("/user/{userId}/video/{videoId}")
-    public ResponseEntity<VideoLibraryDTO> addVideoToLibrary(
-            @PathVariable String userId,
-            @PathVariable Long videoId) {
+    @GetMapping("/{libraryId}")
+    public ResponseEntity<ApiResponse<VideoLibraryDTO>> getLibraryById(@PathVariable String libraryId) {
         try {
-            VideoLibraryDTO addedVideo = videoLibraryService.addVideoToLibrary(userId, videoId);
-            return ResponseEntity.status(HttpStatus.CREATED).body(addedVideo);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
-        }
-    }
-
-    @PutMapping("/{libraryId}/status")
-    public ResponseEntity<VideoLibraryDTO> updateVideoStatus(
-            @PathVariable Long libraryId,
-            @RequestParam String status) {
-        try {
-            VideoLibraryDTO updatedLibrary = videoLibraryService.updateVideoStatus(libraryId, status);
-            return ResponseEntity.ok(updatedLibrary);
+            VideoLibraryDTO library = libraryService.getLibraryById(libraryId);
+            return ResponseEntity.ok(ApiResponse.success("Library retrieved successfully", library));
         } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.notFound().build();
         }
     }
 
-    @PutMapping("/{libraryId}/progress")
-    public ResponseEntity<VideoLibraryDTO> updateVideoProgress(
-            @PathVariable Long libraryId,
-            @RequestParam Integer progress) {
+    @PostMapping
+    public ResponseEntity<ApiResponse<VideoLibraryDTO>> createLibrary(@Valid @RequestBody VideoLibraryDTO libraryDTO) {
+        VideoLibraryDTO createdLibrary = libraryService.createLibrary(libraryDTO);
+        return ResponseEntity.ok(ApiResponse.success("Library created successfully", createdLibrary));
+    }
+
+    @PutMapping("/{libraryId}")
+    public ResponseEntity<ApiResponse<VideoLibraryDTO>> updateLibrary(@PathVariable String libraryId, @Valid @RequestBody VideoLibraryDTO libraryDTO) {
         try {
-            VideoLibraryDTO updatedLibrary = videoLibraryService.updateVideoProgress(libraryId, progress);
-            return ResponseEntity.ok(updatedLibrary);
+            VideoLibraryDTO updatedLibrary = libraryService.updateLibrary(libraryId, libraryDTO);
+            return ResponseEntity.ok(ApiResponse.success("Library updated successfully", updatedLibrary));
         } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.notFound().build();
         }
     }
 
     @DeleteMapping("/{libraryId}")
-    public ResponseEntity<Void> removeVideoFromLibrary(@PathVariable Long libraryId) {
+    public ResponseEntity<ApiResponse<Void>> deleteLibrary(@PathVariable String libraryId) {
         try {
-            videoLibraryService.removeVideoFromLibrary(libraryId);
-            return ResponseEntity.noContent().build();
+            libraryService.deleteLibrary(libraryId);
+            return ResponseEntity.ok(ApiResponse.success("Library deleted successfully"));
         } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.notFound().build();
         }
     }
 
-    @GetMapping("/user/{userId}/status/{status}")
-    public ResponseEntity<List<VideoLibraryDTO>> getVideosByStatus(
-            @PathVariable String userId,
-            @PathVariable String status) {
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<ApiResponse<List<VideoLibraryDTO>>> getLibrariesByUserId(@PathVariable String userId) {
+        List<VideoLibraryDTO> libraries = libraryService.getLibrariesByUserId(userId);
+        return ResponseEntity.ok(ApiResponse.success("User libraries retrieved successfully", libraries));
+    }
+
+    @GetMapping("/public")
+    public ResponseEntity<ApiResponse<List<VideoLibraryDTO>>> getPublicLibraries() {
+        List<VideoLibraryDTO> libraries = libraryService.getPublicLibraries();
+        return ResponseEntity.ok(ApiResponse.success("Public libraries retrieved successfully", libraries));
+    }
+
+    @PostMapping("/{libraryId}/videos/{videoId}")
+    public ResponseEntity<ApiResponse<VideoLibraryDTO>> addVideoToLibrary(@PathVariable String libraryId, @PathVariable String videoId) {
         try {
-            List<VideoLibraryDTO> videos = videoLibraryService.getVideosByStatus(userId, status);
-            return ResponseEntity.ok(videos);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            VideoLibraryDTO library = libraryService.addVideoToLibrary(libraryId, videoId);
+            return ResponseEntity.ok(ApiResponse.success("Video added to library successfully", library));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/{libraryId}/videos/{videoId}")
+    public ResponseEntity<ApiResponse<VideoLibraryDTO>> removeVideoFromLibrary(@PathVariable String libraryId, @PathVariable String videoId) {
+        try {
+            VideoLibraryDTO library = libraryService.removeVideoFromLibrary(libraryId, videoId);
+            return ResponseEntity.ok(ApiResponse.success("Video removed from library successfully", library));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
         }
     }
 } 

@@ -1,9 +1,10 @@
 package com.example.controller;
 
+import com.example.common.ApiResponse;
 import com.example.dto.WatchHistoryDTO;
 import com.example.service.WatchHistoryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,59 +15,78 @@ import java.util.List;
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class WatchHistoryController {
-    private final WatchHistoryService watchHistoryService;
+    private final WatchHistoryService historyService;
 
-    @GetMapping("/user/{userId}")
-    public ResponseEntity<List<WatchHistoryDTO>> getUserHistory(@PathVariable String userId) {
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<WatchHistoryDTO>>> getAllHistory() {
+        List<WatchHistoryDTO> history = historyService.getAllHistory();
+        return ResponseEntity.ok(ApiResponse.success("History retrieved successfully", history));
+    }
+
+    @GetMapping("/{historyId}")
+    public ResponseEntity<ApiResponse<WatchHistoryDTO>> getHistoryById(@PathVariable String historyId) {
         try {
-            List<WatchHistoryDTO> history = watchHistoryService.getUserHistory(userId);
-            return ResponseEntity.ok(history);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            WatchHistoryDTO history = historyService.getHistoryById(historyId);
+            return ResponseEntity.ok(ApiResponse.success("History retrieved successfully", history));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
         }
     }
 
-    @PostMapping("/user/{userId}/video/{videoId}")
-    public ResponseEntity<WatchHistoryDTO> addToHistory(
-            @PathVariable String userId,
-            @PathVariable Long videoId) {
+    @PostMapping
+    public ResponseEntity<ApiResponse<WatchHistoryDTO>> createHistory(@Valid @RequestBody WatchHistoryDTO historyDTO) {
+        WatchHistoryDTO createdHistory = historyService.createHistory(historyDTO);
+        return ResponseEntity.ok(ApiResponse.success("History created successfully", createdHistory));
+    }
+
+    @PutMapping("/{historyId}")
+    public ResponseEntity<ApiResponse<WatchHistoryDTO>> updateHistory(@PathVariable String historyId, @Valid @RequestBody WatchHistoryDTO historyDTO) {
         try {
-            WatchHistoryDTO history = watchHistoryService.addToHistory(userId, videoId);
-            return ResponseEntity.status(HttpStatus.CREATED).body(history);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            WatchHistoryDTO updatedHistory = historyService.updateHistory(historyId, historyDTO);
+            return ResponseEntity.ok(ApiResponse.success("History updated successfully", updatedHistory));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
         }
     }
 
     @DeleteMapping("/{historyId}")
-    public ResponseEntity<Void> removeFromHistory(@PathVariable Long historyId) {
+    public ResponseEntity<ApiResponse<Void>> deleteHistory(@PathVariable String historyId) {
         try {
-            watchHistoryService.removeFromHistory(historyId);
-            return ResponseEntity.noContent().build();
+            historyService.deleteHistory(historyId);
+            return ResponseEntity.ok(ApiResponse.success("History deleted successfully"));
         } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.notFound().build();
         }
     }
 
-    @DeleteMapping("/user/{userId}")
-    public ResponseEntity<Void> clearUserHistory(@PathVariable String userId) {
-        try {
-            watchHistoryService.clearUserHistory(userId);
-            return ResponseEntity.noContent().build();
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-        }
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<ApiResponse<List<WatchHistoryDTO>>> getHistoryByUserId(@PathVariable String userId) {
+        List<WatchHistoryDTO> history = historyService.getHistoryByUserId(userId);
+        return ResponseEntity.ok(ApiResponse.success("User history retrieved successfully", history));
     }
 
-    @GetMapping("/user/{userId}/recent")
-    public ResponseEntity<List<WatchHistoryDTO>> getRecentHistory(
+    @PutMapping("/user/{userId}/video/{videoId}/progress")
+    public ResponseEntity<ApiResponse<WatchHistoryDTO>> updateProgress(
             @PathVariable String userId,
-            @RequestParam(defaultValue = "10") int limit) {
+            @PathVariable String videoId,
+            @RequestParam Integer progress) {
         try {
-            List<WatchHistoryDTO> history = watchHistoryService.getRecentHistory(userId, limit);
-            return ResponseEntity.ok(history);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            WatchHistoryDTO history = historyService.updateProgress(userId, videoId, progress);
+            return ResponseEntity.ok(ApiResponse.success("Progress updated successfully", history));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PutMapping("/user/{userId}/video/{videoId}/complete")
+    public ResponseEntity<ApiResponse<WatchHistoryDTO>> markAsCompleted(
+            @PathVariable String userId,
+            @PathVariable String videoId) {
+        try {
+            WatchHistoryDTO history = historyService.markAsCompleted(userId, videoId);
+            return ResponseEntity.ok(ApiResponse.success("Video marked as completed", history));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
         }
     }
 } 
