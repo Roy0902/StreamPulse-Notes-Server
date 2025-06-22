@@ -6,6 +6,7 @@ import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.OtpRequestDTO;
 import com.example.dto.OtpVerificationDTO;
+import com.example.dto.SignupRequestDTO;
 import com.example.dto.UserDTO;
 import com.example.service.UserService;
 import jakarta.validation.Valid;
@@ -31,8 +32,14 @@ public class UserController {
     }
 
     @PostMapping("/signup")
-    public ResponseEntity<ApiResponse<Void>> signup(@Valid @RequestBody UserDTO userDTO) {
+    public ResponseEntity<ApiResponse<Void>> signup(@Valid @RequestBody SignupRequestDTO signupRequest) {
         try {
+            // Convert SignupRequestDTO to UserDTO for service layer
+            UserDTO userDTO = new UserDTO();
+            userDTO.setUsername(signupRequest.getUsername());
+            userDTO.setEmail(signupRequest.getEmail());
+            userDTO.setPassword(signupRequest.getPassword());
+            
             ApiResponse<Void> response = userService.signUp(userDTO);
             return ResponseEntity.status(response.getCode()).body(response);
         } catch (InterruptedException e) {
@@ -97,9 +104,21 @@ public class UserController {
     }
 
     @PostMapping("/async/signup")
-    public CompletableFuture<ResponseEntity<ApiResponse<Void>>> signupAsync(@Valid @RequestBody UserDTO userDTO) {
-        return userService.signUpAsync(userDTO)
-                .thenApply(response -> ResponseEntity.status(response.getCode()).body(response));
+    public CompletableFuture<ResponseEntity<ApiResponse<Void>>> signupAsync(@Valid @RequestBody SignupRequestDTO signupRequest) {
+        try {
+            // Convert SignupRequestDTO to UserDTO for service layer
+            UserDTO userDTO = new UserDTO();
+            userDTO.setUsername(signupRequest.getUsername());
+            userDTO.setEmail(signupRequest.getEmail());
+            userDTO.setPassword(signupRequest.getPassword());
+            
+            return userService.signUpAsync(userDTO)
+                    .thenApply(response -> ResponseEntity.status(response.getCode()).body(response));
+        } catch (Exception e) {
+            return CompletableFuture.completedFuture(
+                ResponseEntity.internalServerError().body(ApiResponse.serverError("Registration failed"))
+            );
+        }
     }
 
     @PostMapping("/async/send-otp")

@@ -5,7 +5,6 @@ import com.example.common.JwtUtil;
 import com.example.common.MessageConstants;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
-import com.example.dto.UserDTO;
 import com.example.entity.User;
 import com.example.repository.UserRepository;
 import com.example.service.EmailService;
