@@ -84,31 +84,6 @@ public class OtpCacheServiceImpl implements OtpCacheService {
     }
     
     @Override
-    public boolean hasOtp(String email, String purpose) {
-        try {
-            String key = buildOtpKey(email, purpose);
-            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
-        } catch (Exception e) {
-            log.error("Failed to check OTP existence in cache for email: {}, purpose: {}, Error: {}", 
-                     maskEmail(email), purpose, e.getMessage(), e);
-            return false;
-        }
-    }
-    
-    @Override
-    public long getOtpTtl(String email, String purpose) {
-        try {
-            String key = buildOtpKey(email, purpose);
-            Long ttl = redisTemplate.getExpire(key, TimeUnit.SECONDS);
-            return ttl != null ? ttl : -1;
-        } catch (Exception e) {
-            log.error("Failed to get OTP TTL for email: {}, purpose: {}, Error: {}", 
-                     maskEmail(email), purpose, e.getMessage(), e);
-            return -1;
-        }
-    }
-    
-    @Override
     public void cleanupExpiredOtps() {
         try {
             // This method is called by the scheduler

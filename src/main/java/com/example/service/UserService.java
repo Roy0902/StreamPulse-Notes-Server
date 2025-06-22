@@ -4,21 +4,18 @@ import com.example.common.ApiResponse;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.SignupRequestDTO;
+import com.example.dto.UserDTO;
 
 import java.util.concurrent.CompletableFuture;
 
 public interface UserService {
-    // Synchronous methods
+    // Read operations (synchronous)
     ApiResponse<LoginResponseDTO> login(LoginRequestDTO loginRequest);
-    ApiResponse<Void> signUp(SignupRequestDTO userDTO) throws InterruptedException;
+    UserDTO getUserById(String userId);
     
-    // OTP Methods
-    ApiResponse<Void> sendOtpForEmailVerification(String email);
-    ApiResponse<Void> verifyOtpAndActivateUser(String email, String otpCode);
-    
-    // Async methods for better performance
-    CompletableFuture<ApiResponse<LoginResponseDTO>> loginAsync(LoginRequestDTO loginRequest);
-    CompletableFuture<ApiResponse<Void>> signUpAsync(UserDTO userDTO);
-    CompletableFuture<ApiResponse<Void>> sendOtpForEmailVerificationAsync(String email);
-    CompletableFuture<ApiResponse<Void>> verifyOtpAndActivateUserAsync(String email, String otpCode);
+    // Write operations (asynchronous)
+    CompletableFuture<ApiResponse<Void>> signUp(SignupRequestDTO signupRequest);
+    CompletableFuture<ApiResponse<Void>> sendOtpForEmailVerification(String email);
+    CompletableFuture<ApiResponse<Void>> verifyOtpAndActivateUser(String email, String otpCode);
+    CompletableFuture<UserDTO> updateUser(String userId, UserDTO userDTO);
 } 

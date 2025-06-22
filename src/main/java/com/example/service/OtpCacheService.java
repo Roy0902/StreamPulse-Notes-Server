@@ -20,16 +20,6 @@ public interface OtpCacheService {
     void removeOtp(String email, String purpose);
     
     /**
-     * Check if OTP exists in cache
-     */
-    boolean hasOtp(String email, String purpose);
-    
-    /**
-     * Get remaining TTL for OTP
-     */
-    long getOtpTtl(String email, String purpose);
-    
-    /**
      * Clean up expired OTPs
      */
     void cleanupExpiredOtps();

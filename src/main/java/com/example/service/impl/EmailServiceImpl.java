@@ -1,5 +1,6 @@
 package com.example.service.impl;
 
+import com.example.config.concurrency.ThreadPoolFactory;
 import com.example.service.EmailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,7 +12,6 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 
 @Service
 @RequiredArgsConstructor
@@ -19,7 +19,7 @@ import java.util.concurrent.ExecutorService;
 public class EmailServiceImpl implements EmailService {
     
     private final JavaMailSender mailSender;
-    private final ExecutorService emailExecutor;
+    private final ThreadPoolFactory threadPoolFactory;
     
     @Value("${spring.mail.username}")
     private String fromEmail;
@@ -35,7 +35,7 @@ public class EmailServiceImpl implements EmailService {
                 log.error("Failed to send OTP email to: {}, Error: {}", maskEmail(to), e.getMessage(), e);
                 throw new RuntimeException("Email sending failed", e);
             }
-        }, emailExecutor);
+        }, threadPoolFactory.getEmailServiceThreadPool());
     }
 
     private void sendOtpEmail(String to, String username, String otp) throws MessagingException {
