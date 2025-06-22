@@ -1,4 +1,4 @@
-package com.example.config;
+package com.example.config.security;
 
 import com.example.common.JwtUtil;
 import com.example.common.MessageConstants;
@@ -44,6 +44,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
         final String username;
+        final String userId;
         
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
@@ -54,15 +55,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         
         try {
             username = jwtUtil.extractUsername(jwt);
+            userId = jwtUtil.extractUserId(jwt);
             
-            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            if (username != null && userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 
-                User user = userRepository.findByUsername(username);
+                User user = userRepository.findById(userId).orElse(null);
                 if (user == null) {
                     String timestamp = LocalDateTime.now().format(formatter);
-                    logger.warn("[{}] JWT authentication failed - Username: {}, Reason: User not found, IP: {}", 
-                               timestamp, username, getClientIP(request));
+                    logger.warn("[{}] JWT authentication failed - UserID: {}, Username: {}, Reason: User not found, IP: {}", 
+                               timestamp, userId, username, getClientIP(request));
                     sendErrorResponse(response, 401, MessageConstants.USER_NOT_FOUND_AUTH);
+                    return;
+                }
+                
+                // Verify username matches (additional security check)
+                if (!user.getUsername().equals(username)) {
+                    String timestamp = LocalDateTime.now().format(formatter);
+                    logger.warn("[{}] JWT authentication failed - UserID: {}, Username mismatch: {} vs {}, IP: {}", 
+                               timestamp, userId, username, user.getUsername(), getClientIP(request));
+                    sendErrorResponse(response, 401, MessageConstants.INVALID_TOKEN);
                     return;
                 }
                 
@@ -80,8 +91,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 } else {
                     String timestamp = LocalDateTime.now().format(formatter);
-                    logger.warn("[{}] JWT authentication failed - Username: {}, Reason: Invalid token, IP: {}", 
-                               timestamp, username, getClientIP(request));
+                    logger.warn("[{}] JWT authentication failed - UserID: {}, Username: {}, Reason: Invalid token, IP: {}", 
+                               timestamp, userId, username, getClientIP(request));
                     sendErrorResponse(response, 401, MessageConstants.INVALID_TOKEN);
                     return;
                 }

@@ -1,8 +1,11 @@
 package com.example.controller;
 
 import com.example.common.ApiResponse;
+import com.example.common.JwtContextUtil;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
+import com.example.dto.OtpRequestDTO;
+import com.example.dto.OtpVerificationDTO;
 import com.example.dto.UserDTO;
 import com.example.service.UserService;
 import jakarta.validation.Valid;
@@ -18,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class UserController {
     private final UserService userService;
+    private final JwtContextUtil jwtContextUtil;
 
     // Synchronous endpoints
     @PostMapping("/login")
@@ -37,30 +41,14 @@ public class UserController {
     }
 
     @PostMapping("/send-otp")
-    public ResponseEntity<ApiResponse<Void>> sendOtp(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
-        if (email == null || email.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(400, "Email is required"));
-        }
-        
-        ApiResponse<Void> response = userService.sendOtpForEmailVerification(email.trim());
+    public ResponseEntity<ApiResponse<Void>> sendOtp(@Valid @RequestBody OtpRequestDTO otpRequest) {
+        ApiResponse<Void> response = userService.sendOtpForEmailVerification(otpRequest.getEmail());
         return ResponseEntity.status(response.getCode()).body(response);
     }
 
     @PostMapping("/verify-otp")
-    public ResponseEntity<ApiResponse<Void>> verifyOtp(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
-        String otpCode = request.get("otpCode");
-        
-        if (email == null || email.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(400, "Email is required"));
-        }
-        
-        if (otpCode == null || otpCode.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(400, "OTP code is required"));
-        }
-        
-        ApiResponse<Void> response = userService.verifyOtpAndActivateUser(email.trim(), otpCode.trim());
+    public ResponseEntity<ApiResponse<Void>> verifyOtp(@Valid @RequestBody OtpVerificationDTO otpVerification) {
+        ApiResponse<Void> response = userService.verifyOtpAndActivateUser(otpVerification.getEmail(), otpVerification.getOtpCode());
         return ResponseEntity.status(response.getCode()).body(response);
     }
 
@@ -72,6 +60,23 @@ public class UserController {
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponse<Map<String, String>>> getCurrentUser() {
+        String userId = jwtContextUtil.getCurrentUserId();
+        String username = jwtContextUtil.getCurrentUsername();
+        
+        if (userId == null) {
+            return ResponseEntity.status(401).body(ApiResponse.error(401, "User not authenticated"));
+        }
+        
+        Map<String, String> userInfo = Map.of(
+            "userId", userId,
+            "username", username != null ? username : "Unknown"
+        );
+        
+        return ResponseEntity.ok(ApiResponse.success("Current user info retrieved", userInfo));
     }
 
     @PutMapping("/{userId}")
@@ -98,36 +103,14 @@ public class UserController {
     }
 
     @PostMapping("/async/send-otp")
-    public CompletableFuture<ResponseEntity<ApiResponse<Void>>> sendOtpAsync(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
-        if (email == null || email.trim().isEmpty()) {
-            return CompletableFuture.completedFuture(
-                ResponseEntity.badRequest().body(ApiResponse.error(400, "Email is required"))
-            );
-        }
-        
-        return userService.sendOtpForEmailVerificationAsync(email.trim())
+    public CompletableFuture<ResponseEntity<ApiResponse<Void>>> sendOtpAsync(@Valid @RequestBody OtpRequestDTO otpRequest) {
+        return userService.sendOtpForEmailVerificationAsync(otpRequest.getEmail())
                 .thenApply(response -> ResponseEntity.status(response.getCode()).body(response));
     }
 
     @PostMapping("/async/verify-otp")
-    public CompletableFuture<ResponseEntity<ApiResponse<Void>>> verifyOtpAsync(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
-        String otpCode = request.get("otpCode");
-        
-        if (email == null || email.trim().isEmpty()) {
-            return CompletableFuture.completedFuture(
-                ResponseEntity.badRequest().body(ApiResponse.error(400, "Email is required"))
-            );
-        }
-        
-        if (otpCode == null || otpCode.trim().isEmpty()) {
-            return CompletableFuture.completedFuture(
-                ResponseEntity.badRequest().body(ApiResponse.error(400, "OTP code is required"))
-            );
-        }
-        
-        return userService.verifyOtpAndActivateUserAsync(email.trim(), otpCode.trim())
+    public CompletableFuture<ResponseEntity<ApiResponse<Void>>> verifyOtpAsync(@Valid @RequestBody OtpVerificationDTO otpVerification) {
+        return userService.verifyOtpAndActivateUserAsync(otpVerification.getEmail(), otpVerification.getOtpCode())
                 .thenApply(response -> ResponseEntity.status(response.getCode()).body(response));
     }
 

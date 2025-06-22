@@ -22,22 +22,23 @@ public class JwtUtil {
     private static final long REFRESH_TOKEN_VALIDITY = 12 * 60 * 60 * 1000; // 12 hours
     private static final long REMEMBER_ME_REFRESH_TOKEN_VALIDITY = 5 * 24 * 60 * 60 * 1000; // 5 days
 
-    public static String generateToken(String username, String email) {
-        return generateToken(username, email, ACCESS_TOKEN_VALIDITY);
+    public static String generateToken(String username, String email, String userId) {
+        return generateToken(username, email, userId, ACCESS_TOKEN_VALIDITY);
     }
 
-    public static String generateRefreshToken(String username, String email) {
-        return generateToken(username, email, REFRESH_TOKEN_VALIDITY);
+    public static String generateRefreshToken(String username, String email, String userId) {
+        return generateToken(username, email, userId, REFRESH_TOKEN_VALIDITY);
     }
 
-    public static String generateRefreshToken(String username, String email, boolean rememberMe) {
+    public static String generateRefreshToken(String username, String email, String userId, boolean rememberMe) {
         long validity = rememberMe ? REMEMBER_ME_REFRESH_TOKEN_VALIDITY : REFRESH_TOKEN_VALIDITY;
-        return generateToken(username, email, validity);
+        return generateToken(username, email, userId, validity);
     }
 
-    private static String generateToken(String username, String email, long validity) {
+    private static String generateToken(String username, String email, String userId, long validity) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("email", email);
+        claims.put("userId", userId);
         claims.put("type", validity == ACCESS_TOKEN_VALIDITY ? "access" : "refresh");
         claims.put("iat", new Date());
         return createToken(claims, username, validity);
@@ -60,6 +61,14 @@ public class JwtUtil {
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+
+    public String extractUserId(String token) {
+        return extractClaim(token, claims -> claims.get("userId", String.class));
+    }
+
+    public String extractEmail(String token) {
+        return extractClaim(token, claims -> claims.get("email", String.class));
     }
 
     public Date extractExpiration(String token) {

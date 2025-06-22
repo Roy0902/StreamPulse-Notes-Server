@@ -1,22 +1,44 @@
 package com.example.service.impl;
 
+import com.example.service.EmailService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
-import lombok.RequiredArgsConstructor;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 @Service
 @RequiredArgsConstructor
-public class EmailServiceImpl {
+@Slf4j
+public class EmailServiceImpl implements EmailService {
+    
     private final JavaMailSender mailSender;
+    private final ExecutorService emailExecutor;
     
     @Value("${spring.mail.username}")
     private String fromEmail;
 
-    public void sendOtpEmail(String to, String username, String otp) throws MessagingException {
+    @Override
+    public CompletableFuture<Void> sendOtpEmailAsync(String to, String username, String otp) {
+        
+        return CompletableFuture.runAsync(() -> {
+            try {
+                sendOtpEmail(to, username, otp);
+                log.info("OTP email sent successfully to: {}", maskEmail(to));
+            } catch (Exception e) {
+                log.error("Failed to send OTP email to: {}, Error: {}", maskEmail(to), e.getMessage(), e);
+                throw new RuntimeException("Email sending failed", e);
+            }
+        }, emailExecutor);
+    }
+
+    private void sendOtpEmail(String to, String username, String otp) throws MessagingException {
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
@@ -38,5 +60,14 @@ public class EmailServiceImpl {
         mailSender.send(message);
     }
 
-
+    private String maskEmail(String email) {
+        if (email == null || email.isEmpty()) {
+            return "***";
+        }
+        int atIndex = email.indexOf('@');
+        if (atIndex <= 1) {
+            return "***@" + (atIndex > 0 ? email.substring(atIndex + 1) : "");
+        }
+        return email.charAt(0) + "***@" + email.substring(atIndex + 1);
+    }
 }

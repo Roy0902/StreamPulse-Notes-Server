@@ -6,10 +6,9 @@ import com.example.common.MessageConstants;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.UserDTO;
-import com.example.entity.Otp;
 import com.example.entity.User;
-import com.example.repository.OtpRepository;
 import com.example.repository.UserRepository;
+import com.example.service.EmailService;
 import com.example.service.UserService;
 import lombok.RequiredArgsConstructor;
 import com.github.rholder.fauxflake.IdGenerators;
@@ -21,6 +20,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.service.OtpCacheService;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -34,8 +34,8 @@ public class UserServiceImpl implements UserService {
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
     private final UserRepository userRepository;
-    private final OtpRepository otpRepository;
-    private final EmailServiceImpl emailService;
+    private final EmailService emailService;
+    private final OtpCacheService otpCacheService;
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
@@ -70,9 +70,10 @@ public class UserServiceImpl implements UserService {
             user.setFailedLoginAttempts(0);
             userRepository.save(user);
             
+            // Generate JWT token
             LoginResponseDTO loginData = new LoginResponseDTO();
-            loginData.setToken(JwtUtil.generateToken(user.getUsername(), user.getEmail()));
-            loginData.setRefreshToken(JwtUtil.generateRefreshToken(user.getUsername(), user.getEmail(), loginRequest.isRememberMe()));
+            loginData.setAccessToken(JwtUtil.generateToken(user.getUsername(), user.getEmail(), user.getUserId()));
+            loginData.setRefreshToken(JwtUtil.generateRefreshToken(user.getUsername(), user.getEmail(), user.getUserId(), loginRequest.isRememberMe()));
             
             String successMessage = loginRequest.isRememberMe() 
                 ? MessageConstants.LOGIN_SUCCESSFUL_REMEMBER_ME 
@@ -124,7 +125,11 @@ public class UserServiceImpl implements UserService {
                 return ApiResponse.error(500, "Registration completed but verification failed. Please contact support.");
             }
             
-            return ApiResponse.success(MessageConstants.REGISTRATION_SUCCESSFUL);
+            String timestamp = LocalDateTime.now().format(formatter);
+            logger.info("[{}] User registered successfully - UserID: {}, Email: {}", 
+                        timestamp, userId, maskEmail(userDTO.getEmail()));
+            
+            return ApiResponse.success("Account created successfully. Please verify your email address to activate your account.");
 
         } catch (InterruptedException e) {
             String timestamp = LocalDateTime.now().format(formatter);
@@ -291,32 +296,36 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public ApiResponse<Void> sendOtpForEmailVerification(String email) {
         try {
-            // Check if user exists and is unverified
+            // Check if user exists
             User user = userRepository.findByEmail(email);
             if (user == null) {
-                return ApiResponse.error(404, "User not found with this email address.");
+                return ApiResponse.error(404, "User not found with this email address. Please sign up first.");
             }
             
-            if (user.getStatus() != User.Status.unverified) {
+            // Check if user is already verified
+            if (user.getStatus() == User.Status.normal) {
                 return ApiResponse.error(400, "Email is already verified.");
+            }
+            
+            // Check if user is revoked
+            if (user.getStatus() == User.Status.revoked) {
+                return ApiResponse.error(400, "Account has been revoked. Please contact support.");
             }
             
             // Generate 6-digit OTP
             String otpCode = generateOtp();
             
-            // Create OTP entity
-            Otp otp = new Otp();
-            otp.setEmail(email);
-            otp.setOtpCode(otpCode);
-            otp.setExpiresAt(LocalDateTime.now().plusMinutes(10)); // 10 minutes expiration
-            otp.setPurpose("EMAIL_VERIFICATION");
-            otp.setIsUsed(false);
+            // Store OTP in Valkey cache only (10 minutes TTL)
+            otpCacheService.storeOtp(email, otpCode, "EMAIL_VERIFICATION", 600);
             
-            // Save OTP
-            otpRepository.save(otp);
-            
-            // Send OTP email
-            emailService.sendOtpEmail(email, user.getUsername(), otpCode);
+            // Send OTP email asynchronously
+            emailService.sendOtpEmailAsync(email, user.getUsername(), otpCode)
+                    .exceptionally(throwable -> {
+                        String timestamp = LocalDateTime.now().format(formatter);
+                        logger.error("[{}] Email sending failed - Email: {}, Error: {}", 
+                                    timestamp, maskEmail(email), throwable.getMessage());
+                        return null;
+                    });
             
             String timestamp = LocalDateTime.now().format(formatter);
             logger.info("[{}] OTP sent successfully - Email: {}", timestamp, maskEmail(email));
@@ -335,34 +344,28 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public ApiResponse<Void> verifyOtpAndActivateUser(String email, String otpCode) {
         try {
-            // Find the most recent valid OTP
-            Otp otp = otpRepository.findFirstByEmailAndPurposeAndIsUsedFalseAndExpiresAtAfterOrderByCreatedAtDesc(
-                    email, "EMAIL_VERIFICATION", LocalDateTime.now()).orElse(null);
+            // Get OTP from Valkey cache only
+            var cachedOtp = otpCacheService.getOtp(email, "EMAIL_VERIFICATION");
             
-            if (otp == null) {
+            if (cachedOtp.isPresent() && cachedOtp.get().equals(otpCode)) {
+                // OTP found in cache and matches
+                otpCacheService.removeOtp(email, "EMAIL_VERIFICATION");
+                
+                // Update user status to normal
+                User user = userRepository.findByEmail(email);
+                if (user != null) {
+                    user.setStatus(User.Status.normal);
+                    user.setFailedLoginAttempts(0); // Reset failed attempts
+                    userRepository.save(user);
+                }
+                
+                String timestamp = LocalDateTime.now().format(formatter);
+                logger.info("[{}] Email verified successfully - Email: {}", timestamp, maskEmail(email));
+                
+                return ApiResponse.success("Email verified successfully. You can now login.");
+            } else {
                 return ApiResponse.error(400, "Invalid or expired OTP. Please request a new one.");
             }
-            
-            // Verify OTP code
-            if (!otp.getOtpCode().equals(otpCode)) {
-                return ApiResponse.error(400, "Invalid OTP code. Please try again.");
-            }
-            
-            // Mark OTP as used
-            otpRepository.markAsUsed(otp.getOtpId());
-            
-            // Update user status to normal
-            User user = userRepository.findByEmail(email);
-            if (user != null) {
-                user.setStatus(User.Status.normal);
-                user.setFailedLoginAttempts(0); // Reset failed attempts
-                userRepository.save(user);
-            }
-            
-            String timestamp = LocalDateTime.now().format(formatter);
-            logger.info("[{}] Email verified successfully - Email: {}", timestamp, maskEmail(email));
-            
-            return ApiResponse.success("Email verified successfully. You can now login.");
             
         } catch (Exception e) {
             String timestamp = LocalDateTime.now().format(formatter);
