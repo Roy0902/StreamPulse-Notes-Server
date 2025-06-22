@@ -14,16 +14,16 @@ import java.time.LocalDateTime;
 @EntityListeners(AuditingEntityListener.class)
 public class User {
     @Id
-    @Column(name = "user_id", length = 30)
+    @Column(name = "user_id", length = 36)
     private String userId;
 
     @Column(name = "username", nullable = false, unique = true, length = 50)
     private String username;
 
-    @Column(name = "email", nullable = false, unique = true, length = 100)
+    @Column(name = "email", nullable = false, unique = true, length = 255)
     private String email;
 
-    @Column(name = "password_hash", nullable = false)
+    @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
     @Column(name = "provider", length = 20)
@@ -33,12 +33,15 @@ public class User {
     private String providerId;
 
     public enum Status {
-        normal, revoked
+        normal, revoked, unverified
     }
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private Status status = Status.normal;
+    private Status status = Status.unverified;
+
+    @Column(name = "failed_login_attempts", nullable = false)
+    private Integer failedLoginAttempts = 0;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)

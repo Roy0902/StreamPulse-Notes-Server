@@ -6,7 +6,9 @@ import com.example.common.MessageConstants;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.UserDTO;
+import com.example.entity.Otp;
 import com.example.entity.User;
+import com.example.repository.OtpRepository;
 import com.example.repository.UserRepository;
 import com.example.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +16,7 @@ import com.github.rholder.fauxflake.IdGenerators;
 import com.github.rholder.fauxflake.api.IdGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -21,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Random;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +34,8 @@ public class UserServiceImpl implements UserService {
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
     private final UserRepository userRepository;
+    private final OtpRepository otpRepository;
+    private final EmailServiceImpl emailService;
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
@@ -41,9 +48,27 @@ public class UserServiceImpl implements UserService {
                 return ApiResponse.error(401, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
             }
             
+            // Check if email is verified
+            if (user.getStatus() == User.Status.unverified) {
+                return ApiResponse.error(401, "Please verify your email address before logging in.");
+            }
+            
+            // Check if account is revoked
+            if (user.getStatus() == User.Status.revoked) {
+                return ApiResponse.error(401, "Your account has been revoked. Please contact support.");
+            }
+            
             if (!passwordEncoder.matches(loginRequest.getPassword(), user.getPasswordHash())) {
+                // Increment failed login attempts
+                user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
+                userRepository.save(user);
+                
                 return ApiResponse.error(401, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
             }
+            
+            // Reset failed login attempts on successful login
+            user.setFailedLoginAttempts(0);
+            userRepository.save(user);
             
             LoginResponseDTO loginData = new LoginResponseDTO();
             loginData.setToken(JwtUtil.generateToken(user.getUsername(), user.getEmail()));
@@ -65,7 +90,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public ApiResponse<Void> register(UserDTO userDTO) throws InterruptedException {
+    public ApiResponse<Void>signUp(UserDTO userDTO) throws InterruptedException {
         try {
             // Check database health before proceeding
             if (!isDatabaseHealthy()) {
@@ -85,10 +110,8 @@ public class UserServiceImpl implements UserService {
             user.setUserId(userId);
             user.setEmail(userDTO.getEmail());
             user.setUsername(userDTO.getUsername());
-            user.setPasswordHash(passwordEncoder.encode(userDTO.getPasswordHash()));
-            user.setProvider(userDTO.getProvider());
-            user.setProviderId(userDTO.getProviderId());
-            user.setStatus(User.Status.normal);
+            user.setPasswordHash(passwordEncoder.encode(userDTO.getPassword()));
+            user.setStatus(User.Status.unverified);
 
             // Save with retry logic for transient failures
             User savedUser = saveUserWithRetry(user);
@@ -138,7 +161,7 @@ public class UserServiceImpl implements UserService {
                 
                 // Wait before retry (exponential backoff)
                 try {
-                    Thread.sleep(100 * retryCount);
+                    Thread.sleep(100 * retryCount * 2);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException("Save operation interrupted", ie);
@@ -223,15 +246,14 @@ public class UserServiceImpl implements UserService {
             
             user.setUsername(userDTO.getUsername());
             user.setEmail(userDTO.getEmail());
-            if (userDTO.getPasswordHash() != null && !userDTO.getPasswordHash().isEmpty()) {
-                user.setPasswordHash(passwordEncoder.encode(userDTO.getPasswordHash()));
+            if (userDTO.getPassword() != null && !userDTO.getPassword().isEmpty()) {
+                user.setPasswordHash(passwordEncoder.encode(userDTO.getPassword()));
             }
             user.setProvider(userDTO.getProvider());
             user.setProviderId(userDTO.getProviderId());
             
             return convertToDTO(userRepository.save(user));
         } catch (RuntimeException e) {
-
             throw e;
         } catch (Exception e) {
             String timestamp = LocalDateTime.now().format(formatter);
@@ -246,7 +268,7 @@ public class UserServiceImpl implements UserService {
         dto.setUserId(user.getUserId());
         dto.setUsername(user.getUsername());
         dto.setEmail(user.getEmail());
-        dto.setPasswordHash(user.getPasswordHash());
+        dto.setPassword(user.getPasswordHash());
         dto.setProvider(user.getProvider());
         dto.setProviderId(user.getProviderId());
         dto.setStatus(user.getStatus().name());
@@ -255,12 +277,142 @@ public class UserServiceImpl implements UserService {
     
     private String maskEmail(String email) {
         if (email == null || email.isEmpty()) {
-            return "null";
+            return "***";
         }
         int atIndex = email.indexOf('@');
         if (atIndex <= 1) {
             return "***@" + (atIndex > 0 ? email.substring(atIndex + 1) : "");
         }
         return email.charAt(0) + "***@" + email.substring(atIndex + 1);
+    }
+
+    // OTP Implementation Methods
+    @Override
+    @Transactional
+    public ApiResponse<Void> sendOtpForEmailVerification(String email) {
+        try {
+            // Check if user exists and is unverified
+            User user = userRepository.findByEmail(email);
+            if (user == null) {
+                return ApiResponse.error(404, "User not found with this email address.");
+            }
+            
+            if (user.getStatus() != User.Status.unverified) {
+                return ApiResponse.error(400, "Email is already verified.");
+            }
+            
+            // Generate 6-digit OTP
+            String otpCode = generateOtp();
+            
+            // Create OTP entity
+            Otp otp = new Otp();
+            otp.setEmail(email);
+            otp.setOtpCode(otpCode);
+            otp.setExpiresAt(LocalDateTime.now().plusMinutes(10)); // 10 minutes expiration
+            otp.setPurpose("EMAIL_VERIFICATION");
+            otp.setIsUsed(false);
+            
+            // Save OTP
+            otpRepository.save(otp);
+            
+            // Send OTP email
+            emailService.sendOtpEmail(email, user.getUsername(), otpCode);
+            
+            String timestamp = LocalDateTime.now().format(formatter);
+            logger.info("[{}] OTP sent successfully - Email: {}", timestamp, maskEmail(email));
+            
+            return ApiResponse.success("OTP sent successfully. Please check your email.");
+            
+        } catch (Exception e) {
+            String timestamp = LocalDateTime.now().format(formatter);
+            logger.error("[{}] OTP send failed - Email: {}, Error: {}", 
+                        timestamp, maskEmail(email), e.getMessage(), e);
+            return ApiResponse.error(500, "Failed to send OTP. Please try again.");
+        }
+    }
+
+    @Override
+    @Transactional
+    public ApiResponse<Void> verifyOtpAndActivateUser(String email, String otpCode) {
+        try {
+            // Find the most recent valid OTP
+            Otp otp = otpRepository.findFirstByEmailAndPurposeAndIsUsedFalseAndExpiresAtAfterOrderByCreatedAtDesc(
+                    email, "EMAIL_VERIFICATION", LocalDateTime.now()).orElse(null);
+            
+            if (otp == null) {
+                return ApiResponse.error(400, "Invalid or expired OTP. Please request a new one.");
+            }
+            
+            // Verify OTP code
+            if (!otp.getOtpCode().equals(otpCode)) {
+                return ApiResponse.error(400, "Invalid OTP code. Please try again.");
+            }
+            
+            // Mark OTP as used
+            otpRepository.markAsUsed(otp.getOtpId());
+            
+            // Update user status to normal
+            User user = userRepository.findByEmail(email);
+            if (user != null) {
+                user.setStatus(User.Status.normal);
+                user.setFailedLoginAttempts(0); // Reset failed attempts
+                userRepository.save(user);
+            }
+            
+            String timestamp = LocalDateTime.now().format(formatter);
+            logger.info("[{}] Email verified successfully - Email: {}", timestamp, maskEmail(email));
+            
+            return ApiResponse.success("Email verified successfully. You can now login.");
+            
+        } catch (Exception e) {
+            String timestamp = LocalDateTime.now().format(formatter);
+            logger.error("[{}] OTP verification failed - Email: {}, Error: {}", 
+                        timestamp, maskEmail(email), e.getMessage(), e);
+            return ApiResponse.error(500, "Failed to verify OTP. Please try again.");
+        }
+    }
+    
+    /**
+     * Generate a 6-digit OTP
+     */
+    private String generateOtp() {
+        Random random = new Random();
+        return String.format("%06d", random.nextInt(1000000));
+    }
+
+    // Async Method Implementations
+    @Override
+    @Async("loginExecutor")
+    public CompletableFuture<ApiResponse<LoginResponseDTO>> loginAsync(LoginRequestDTO loginRequest) {
+        return CompletableFuture.completedFuture(login(loginRequest));
+    }
+
+    @Override
+    @Async("userRegistrationExecutor")
+    public CompletableFuture<ApiResponse<Void>> signUpAsync(UserDTO userDTO) {
+        try {
+            return CompletableFuture.completedFuture(signUp(userDTO));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return CompletableFuture.completedFuture(ApiResponse.error(500, "Registration interrupted"));
+        }
+    }
+
+    @Override
+    @Async("userOperationsExecutor")
+    public CompletableFuture<UserDTO> getUserByIdAsync(String userId) {
+        return CompletableFuture.completedFuture(getUserById(userId));
+    }
+
+    @Override
+    @Async("otpExecutor")
+    public CompletableFuture<ApiResponse<Void>> sendOtpForEmailVerificationAsync(String email) {
+        return CompletableFuture.completedFuture(sendOtpForEmailVerification(email));
+    }
+
+    @Override
+    @Async("otpExecutor")
+    public CompletableFuture<ApiResponse<Void>> verifyOtpAndActivateUserAsync(String email, String otpCode) {
+        return CompletableFuture.completedFuture(verifyOtpAndActivateUser(email, otpCode));
     }
 } 
