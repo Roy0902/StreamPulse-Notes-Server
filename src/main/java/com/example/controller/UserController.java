@@ -31,7 +31,7 @@ public class UserController {
         return ResponseEntity.status(response.getCode()).body(response);
     }
 
-    @PostMapping("/signup")
+    @PostMapping("/sign-up")
     public CompletableFuture<ResponseEntity<ApiResponse<Void>>> signup(@Valid @RequestBody SignupRequestDTO signupRequest) {
         return userService.signUp(signupRequest)
                 .thenApply(response -> ResponseEntity.status(response.getCode()).body(response));

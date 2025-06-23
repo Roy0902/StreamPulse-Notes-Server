@@ -1,6 +1,5 @@
 package com.example.service.impl;
 
-import com.example.config.concurrency.ThreadPoolFactory;
 import com.example.service.EmailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,8 +9,12 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import io.github.resilience4j.retry.annotation.Retry;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 @Service
 @RequiredArgsConstructor
@@ -19,12 +22,14 @@ import java.util.concurrent.CompletableFuture;
 public class EmailServiceImpl implements EmailService {
     
     private final JavaMailSender mailSender;
-    private final ThreadPoolFactory threadPoolFactory;
+    private final @Qualifier("emailServiceThreadPool") ExecutorService emailServiceThreadPool;
     
     @Value("${spring.mail.username}")
     private String fromEmail;
 
     @Override
+    @Retry(name = "email")
+    @CircuitBreaker(name = "email", fallbackMethod = "fallbackSendOtpEmailAsync")
     public CompletableFuture<Void> sendOtpEmailAsync(String to, String username, String otp) {
         
         return CompletableFuture.runAsync(() -> {
@@ -35,9 +40,16 @@ public class EmailServiceImpl implements EmailService {
                 log.error("Failed to send OTP email to: {}, Error: {}", maskEmail(to), e.getMessage(), e);
                 throw new RuntimeException("Email sending failed", e);
             }
-        }, threadPoolFactory.getEmailServiceThreadPool());
+        }, emailServiceThreadPool);
     }
 
+    public CompletableFuture<Void> fallbackSendOtpEmailAsync(String to, String username, String otp, Throwable t) {
+        log.error("Fallback: Could not send OTP email to: {}. Reason: {}", maskEmail(to), t.getMessage());
+        return CompletableFuture.failedFuture(new RuntimeException("Failed to send OTP email. Please try again later.", t));
+    }
+
+    @Retry(name = "email")
+    @CircuitBreaker(name = "email", fallbackMethod = "fallbackSendOtpEmail")
     private void sendOtpEmail(String to, String username, String otp) throws MessagingException {
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -59,7 +71,7 @@ public class EmailServiceImpl implements EmailService {
 
         mailSender.send(message);
     }
-
+    
     private String maskEmail(String email) {
         if (email == null || email.isEmpty()) {
             return "***";

@@ -3,7 +3,6 @@ package com.example.service.impl;
 import com.example.common.ApiResponse;
 import com.example.common.JwtUtil;
 import com.example.common.MessageConstants;
-import com.example.config.concurrency.ThreadPoolFactory;
 import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.SignupRequestDTO;
@@ -22,11 +21,15 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.example.service.OtpCacheService;
+import io.github.resilience4j.retry.annotation.Retry;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 @Service
 @RequiredArgsConstructor
@@ -37,11 +40,14 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final EmailService emailService;
     private final OtpCacheService otpCacheService;
-    private final ThreadPoolFactory threadPoolFactory;
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
+    private final @Qualifier("userServiceThreadPool") ExecutorService userServiceThreadPool;
+
     @Override
+    @Retry(name = "database")
+    @CircuitBreaker(name = "database", fallbackMethod = "fallbackLogin")
     public ApiResponse<LoginResponseDTO> login(LoginRequestDTO loginRequest) {
         try {
             User user = userRepository.findByEmail(loginRequest.getEmail());
@@ -57,7 +63,7 @@ public class UserServiceImpl implements UserService {
             
             // Check if account is revoked
             if (user.getStatus() == User.Status.revoked) {
-                return ApiResponse.error(401, "Your account has been revoked. Please contact support.");
+                return ApiResponse.error(403, "Your account has been revoked. Please contact support.");
             }
             
             if (!passwordEncoder.matches(loginRequest.getPassword(), user.getPasswordHash())) {
@@ -65,7 +71,7 @@ public class UserServiceImpl implements UserService {
                 user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
                 userRepository.save(user);
                 
-                return ApiResponse.error(401, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
+                return ApiResponse.error(404, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
             }
             
             // Reset failed login attempts on successful login
@@ -91,8 +97,15 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    public ApiResponse<LoginResponseDTO> fallbackLogin(LoginRequestDTO loginRequest, Throwable t) {
+        logger.error("Fallback: Could not login for email: {}. Reason: {}", maskEmail(loginRequest.getEmail()), t.getMessage());
+        return ApiResponse.error(503, "Service temporarily unavailable. Please try again later.");
+    }
+
     @Override
     @Transactional
+    @Retry(name = "database")
+    @CircuitBreaker(name = "database", fallbackMethod = "fallbackSignUp")
     public CompletableFuture<ApiResponse<Void>> signUp(SignupRequestDTO signupRequest) {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -140,7 +153,12 @@ public class UserServiceImpl implements UserService {
                             timestamp, maskEmail(signupRequest.getEmail()), e.getMessage(), e);
                 return ApiResponse.error(500, MessageConstants.REGISTRATION_FAILED);
             }
-        }, threadPoolFactory.getUserRegistrationThreadPool());
+        }, userServiceThreadPool);
+    }
+    
+    public CompletableFuture<ApiResponse<Void>> fallbackSignUp(SignupRequestDTO signupRequest, Throwable t) {
+        logger.error("Fallback: Could not sign up for email: {}. Reason: {}", maskEmail(signupRequest.getEmail()), t.getMessage());
+        return CompletableFuture.completedFuture(ApiResponse.error(503, "Service temporarily unavailable. Please try again later."));
     }
     
     /**
@@ -225,6 +243,8 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Retry(name = "database")
+    @CircuitBreaker(name = "database", fallbackMethod = "fallbackGetUserById")
     public UserDTO getUserById(String userId) {
         try {
             User user = userRepository.findById(userId)
@@ -241,8 +261,15 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    public UserDTO fallbackGetUserById(String userId, Throwable t) {
+        logger.error("Fallback: Could not get user by ID: {}. Reason: {}", userId, t.getMessage());
+        throw new RuntimeException("Service temporarily unavailable. Please try again later.", t);
+    }
+
     @Override
     @Transactional
+    @Retry(name = "database")
+    @CircuitBreaker(name = "database", fallbackMethod = "fallbackUpdateUser")
     public CompletableFuture<UserDTO> updateUser(String userId, UserDTO userDTO) {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -267,7 +294,12 @@ public class UserServiceImpl implements UserService {
                             timestamp, userId, e.getMessage(), e);
                 throw new RuntimeException(MessageConstants.SERVER_ERROR, e);
             }
-        }, threadPoolFactory.getUserOperationsThreadPool());
+        }, userServiceThreadPool);
+    }
+
+    public CompletableFuture<UserDTO> fallbackUpdateUser(String userId, UserDTO userDTO, Throwable t) {
+        logger.error("Fallback: Could not update user: {}. Reason: {}", userId, t.getMessage());
+        return CompletableFuture.failedFuture(new RuntimeException("Service temporarily unavailable. Please try again later.", t));
     }
 
     private UserDTO convertToDTO(User user) {
@@ -341,7 +373,7 @@ public class UserServiceImpl implements UserService {
                             timestamp, maskEmail(email), e.getMessage(), e);
                 return ApiResponse.error(500, "Failed to send OTP. Please try again.");
             }
-        }, threadPoolFactory.getOtpThreadPool());
+        }, userServiceThreadPool);
     }
 
     @Override
@@ -378,7 +410,7 @@ public class UserServiceImpl implements UserService {
                             timestamp, maskEmail(email), e.getMessage(), e);
                 return ApiResponse.error(500, "Failed to verify OTP. Please try again.");
             }
-        }, threadPoolFactory.getOtpThreadPool());
+        }, userServiceThreadPool);
     }
     
     /**

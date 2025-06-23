@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import io.github.resilience4j.retry.annotation.Retry;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -21,19 +23,16 @@ public class OtpCacheServiceImpl implements OtpCacheService {
     private long defaultTtl;
     
     private static final String OTP_KEY_PREFIX = "otp:";
-    private static final String OTP_PURPOSE_PREFIX = "purpose:";
     
     @Override
+    @Retry(name = "redis")
+    @CircuitBreaker(name = "redis", fallbackMethod = "fallbackStoreOtp")
     public void storeOtp(String email, String otpCode, String purpose, long ttlSeconds) {
         try {
             String key = buildOtpKey(email, purpose);
-            String purposeKey = buildPurposeKey(email, purpose);
             
             // Store OTP with expiration
             redisTemplate.opsForValue().set(key, otpCode, ttlSeconds, TimeUnit.SECONDS);
-            
-            // Store purpose mapping for cleanup
-            redisTemplate.opsForValue().set(purposeKey, purpose, ttlSeconds, TimeUnit.SECONDS);
             
             log.debug("OTP stored in cache for email: {}, purpose: {}, TTL: {}s", 
                      maskEmail(email), purpose, ttlSeconds);
@@ -44,7 +43,14 @@ public class OtpCacheServiceImpl implements OtpCacheService {
         }
     }
     
+    public void fallbackStoreOtp(String email, String otpCode, String purpose, long ttlSeconds, Throwable t) {
+        log.error("Fallback: Could not store OTP for email: {}, purpose: {}. Reason: {}", maskEmail(email), purpose, t.getMessage());
+        // Optionally, you can notify or queue for later retry
+    }
+    
     @Override
+    @Retry(name = "redis")
+    @CircuitBreaker(name = "redis", fallbackMethod = "fallbackGetOtp")
     public Optional<String> getOtp(String email, String purpose) {
         try {
             String key = buildOtpKey(email, purpose);
@@ -66,14 +72,19 @@ public class OtpCacheServiceImpl implements OtpCacheService {
         }
     }
     
+    public Optional<String> fallbackGetOtp(String email, String purpose, Throwable t) {
+        log.error("Fallback: Could not get OTP for email: {}, purpose: {}. Reason: {}", maskEmail(email), purpose, t.getMessage());
+        return Optional.empty();
+    }
+    
     @Override
+    @Retry(name = "redis")
+    @CircuitBreaker(name = "redis", fallbackMethod = "fallbackRemoveOtp")
     public void removeOtp(String email, String purpose) {
         try {
             String key = buildOtpKey(email, purpose);
-            String purposeKey = buildPurposeKey(email, purpose);
             
             redisTemplate.delete(key);
-            redisTemplate.delete(purposeKey);
             
             log.debug("OTP removed from cache for email: {}, purpose: {}", 
                      maskEmail(email), purpose);
@@ -83,23 +94,13 @@ public class OtpCacheServiceImpl implements OtpCacheService {
         }
     }
     
-    @Override
-    public void cleanupExpiredOtps() {
-        try {
-            // This method is called by the scheduler
-            // Redis automatically handles expiration, but we can log some metrics
-            log.info("OTP cache cleanup completed - Redis handles automatic expiration");
-        } catch (Exception e) {
-            log.error("Failed to cleanup expired OTPs: {}", e.getMessage(), e);
-        }
+    public void fallbackRemoveOtp(String email, String purpose, Throwable t) {
+        log.error("Fallback: Could not remove OTP for email: {}, purpose: {}. Reason: {}", maskEmail(email), purpose, t.getMessage());
+        // Optionally, you can queue for later retry
     }
     
     private String buildOtpKey(String email, String purpose) {
         return OTP_KEY_PREFIX + email + ":" + purpose;
-    }
-    
-    private String buildPurposeKey(String email, String purpose) {
-        return OTP_PURPOSE_PREFIX + email + ":" + purpose;
     }
     
     private String maskEmail(String email) {

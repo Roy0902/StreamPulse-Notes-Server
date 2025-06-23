@@ -18,9 +18,4 @@ public interface OtpCacheService {
      * Remove OTP from cache
      */
     void removeOtp(String email, String purpose);
-    
-    /**
-     * Clean up expired OTPs
-     */
-    void cleanupExpiredOtps();
 } 
