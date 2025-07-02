@@ -13,8 +13,8 @@ import io.github.resilience4j.retry.annotation.Retry;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.beans.factory.annotation.Qualifier;
 
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @RequiredArgsConstructor
@@ -28,29 +28,32 @@ public class EmailServiceImpl implements EmailService {
     private String fromEmail;
 
     @Override
-    @Retry(name = "email")
-    @CircuitBreaker(name = "email", fallbackMethod = "fallbackSendOtpEmailAsync")
-    public CompletableFuture<Void> sendOtpEmailAsync(String to, String username, String otp) {
-        
-        return CompletableFuture.runAsync(() -> {
+    public CompletableFuture<Boolean> sendOtpEmailAsync(String to, String username, String otp) {
+        return CompletableFuture.supplyAsync(() -> {
             try {
-                sendOtpEmail(to, username, otp);
+                MimeMessage message = createOtpEmailMessage(to, username, otp);
+                sendEmailWithRetry(message);
                 log.info("OTP email sent successfully to: {}", maskEmail(to));
+                return true;
             } catch (Exception e) {
                 log.error("Failed to send OTP email to: {}, Error: {}", maskEmail(to), e.getMessage(), e);
-                throw new RuntimeException("Email sending failed", e);
+                return false;
             }
         }, emailServiceThreadPool);
     }
 
-    public CompletableFuture<Void> fallbackSendOtpEmailAsync(String to, String username, String otp, Throwable t) {
-        log.error("Fallback: Could not send OTP email to: {}. Reason: {}", maskEmail(to), t.getMessage());
-        return CompletableFuture.failedFuture(new RuntimeException("Failed to send OTP email. Please try again later.", t));
+    @Retry(name = "email")
+    @CircuitBreaker(name = "email", fallbackMethod = "fallbackSendEmail")
+    private void sendEmailWithRetry(MimeMessage message) throws MessagingException {
+        mailSender.send(message); // Only this gets retried
     }
 
-    @Retry(name = "email")
-    @CircuitBreaker(name = "email", fallbackMethod = "fallbackSendOtpEmail")
-    private void sendOtpEmail(String to, String username, String otp) throws MessagingException {
+    public void fallbackSendEmail(MimeMessage message, Throwable t) {
+        log.error("Fallback: Could not send email. Reason: {}", t.getMessage());
+        throw new RuntimeException("Fallback: Email sending failed", t);
+    }
+
+    private MimeMessage createOtpEmailMessage(String to, String username, String otp) throws MessagingException {
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
@@ -69,9 +72,9 @@ public class EmailServiceImpl implements EmailService {
         helper.setFrom(fromEmail);
         helper.setText(htmlContent, true);
 
-        mailSender.send(message);
+        return message;
     }
-    
+
     private String maskEmail(String email) {
         if (email == null || email.isEmpty()) {
             return "***";

@@ -1,13 +1,14 @@
 package com.example.service;
 
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 public interface OtpCacheService {
     
     /**
-     * Store OTP in cache with expiration
+     * Store OTP in cache with expiration asynchronously, returns CompletableFuture<Boolean> for success/failure
      */
-    void storeOtp(String email, String otpCode, String purpose, long ttlSeconds);
+    CompletableFuture<Boolean> storeOtpAsync(String email, String otpCode, String purpose, long ttlSeconds);
     
     /**
      * Get OTP from cache

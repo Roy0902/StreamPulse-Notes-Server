@@ -3,9 +3,8 @@ package com.example.service;
 import java.util.concurrent.CompletableFuture;
 
 public interface EmailService {
-    
     /**
-     * Send OTP email asynchronously using thread pool
+     * Send OTP email asynchronously using thread pool, returns CompletableFuture<Boolean> for success/failure
      */
-    CompletableFuture<Void> sendOtpEmailAsync(String to, String username, String otp);
+    CompletableFuture<Boolean> sendOtpEmailAsync(String to, String username, String otp);
 } 

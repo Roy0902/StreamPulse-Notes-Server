@@ -9,8 +9,8 @@ public class ThreadPoolFactory {
     @Bean(name = "emailServiceThreadPool")
     public ExecutorService emailServiceThreadPool() {
         return new ThreadPoolExecutor(
-            3, // core pool size
-            5, // max pool size
+            10, 
+            20,
             60L, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(100),
             new CustomThreadFactory("email-service"),
@@ -21,8 +21,8 @@ public class ThreadPoolFactory {
     @Bean(name = "userServiceThreadPool")
     public ExecutorService userServiceThreadPool() {
         return new ThreadPoolExecutor(
-            5, // core pool size
-            10, // max pool size
+            10,
+            20,
             60L, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(200),
             new CustomThreadFactory("user-service"),
@@ -33,8 +33,8 @@ public class ThreadPoolFactory {
     @Bean(name = "redisServiceThreadPool")
     public ExecutorService redisServiceThreadPool() {
         return new ThreadPoolExecutor(
-            3, // core pool size
-            5, // max pool size
+            10, 
+            20, 
             60L, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(50),
             new CustomThreadFactory("redis-service"),

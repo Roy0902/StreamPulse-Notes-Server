@@ -17,6 +17,9 @@ public class User {
     @Column(name = "user_id", length = 36)
     private String userId;
 
+    @Version
+    private Long version;
+
     @Column(name = "username", nullable = false, unique = true, length = 50)
     private String username;
 
@@ -39,9 +42,6 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private Status status = Status.unverified;
-
-    @Column(name = "failed_login_attempts", nullable = false)
-    private Integer failedLoginAttempts = 0;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)

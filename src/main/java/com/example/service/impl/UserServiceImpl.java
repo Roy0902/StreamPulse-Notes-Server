@@ -24,12 +24,16 @@ import com.example.service.OtpCacheService;
 import io.github.resilience4j.retry.annotation.Retry;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.beans.factory.annotation.Qualifier;
-
+import com.example.common.LogManager;
+import org.springframework.data.redis.core.RedisTemplate;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CompletableFuture;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Random;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import io.github.resilience4j.retry.RetryRegistry;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -44,79 +48,125 @@ public class UserServiceImpl implements UserService {
     private final IdGenerator snowflake = IdGenerators.newSnowflakeIdGenerator();
 
     private final @Qualifier("userServiceThreadPool") ExecutorService userServiceThreadPool;
+    
+    private static final String FAILED_ATTEMPTS_KEY_PREFIX = "failed_attempts:";
+    private static final long FAILED_ATTEMPTS_TTL = 86400; 
+    private static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
+    
+    private final RedisTemplate<String, Object> redisTemplate;
+    private final RetryRegistry retryRegistry;
 
+    /*
+     * LOGIN FUNCTION
+     */
+    @Async("userServiceThreadPool")
     @Override
     @Retry(name = "database")
     @CircuitBreaker(name = "database", fallbackMethod = "fallbackLogin")
-    public ApiResponse<LoginResponseDTO> login(LoginRequestDTO loginRequest) {
-        try {
-            User user = userRepository.findByEmail(loginRequest.getEmail());
+    public CompletableFuture<ApiResponse<LoginResponseDTO>> login(LoginRequestDTO loginRequest) {
+        return CompletableFuture.supplyAsync(() -> { 
+            try {
+                User user = userRepository.findByEmail(loginRequest.getEmail());
 
-            if (user == null) {
-                return ApiResponse.error(401, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
-            }
-            
-            // Check if email is verified
-            if (user.getStatus() == User.Status.unverified) {
-                return ApiResponse.error(401, "Please verify your email address before logging in.");
-            }
-            
-            // Check if account is revoked
-            if (user.getStatus() == User.Status.revoked) {
-                return ApiResponse.error(403, "Your account has been revoked. Please contact support.");
-            }
-            
-            if (!passwordEncoder.matches(loginRequest.getPassword(), user.getPasswordHash())) {
-                // Increment failed login attempts
-                user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
-                userRepository.save(user);
+                if (user == null) {
+                    return ApiResponse.error(404, MessageConstants.INVALID_EMAIL_OR_PASSWORD,null);
+                }
                 
-                return ApiResponse.error(404, MessageConstants.INVALID_EMAIL_OR_PASSWORD);
+                if (user.getStatus() == User.Status.unverified) {
+                    return ApiResponse.error(401, MessageConstants.EMAIL_NOT_VERIFIED,null);
+                }
+                
+                if (user.getStatus() == User.Status.revoked) {
+                    return ApiResponse.error(403, MessageConstants.ACCOUNT_REVOKED,null);
+                }
+                
+                if (!passwordEncoder.matches(loginRequest.getPassword(), user.getPasswordHash())) {
+                    int failedAttempts = incrementFailedLoginAttemptsAsync(user.getEmail()).join(); 
+                    if(failedAttempts > MAX_FAILED_LOGIN_ATTEMPTS) {                
+                        user.setStatus(User.Status.revoked);   
+                        return ApiResponse.error(403, MessageConstants.ACCOUNT_REVOKED,null);
+                    }
+                    return ApiResponse.error(404, MessageConstants.INVALID_EMAIL_OR_PASSWORD,null);
+                }
+                
+                resetFailedLoginAttemptsAsync(user.getEmail());
+                
+                LoginResponseDTO loginData = new LoginResponseDTO();
+                loginData.setAccessToken(JwtUtil.generateToken(user.getUsername(), user.getEmail(), user.getUserId()));
+                loginData.setRefreshToken(JwtUtil.generateRefreshToken(user.getUsername(), user.getEmail(), user.getUserId(), loginRequest.isRememberMe()));
+                
+                String successMessage = loginRequest.isRememberMe() 
+                    ? MessageConstants.LOGIN_SUCCESSFUL_REMEMBER_ME 
+                    : MessageConstants.LOGIN_SUCCESSFUL;
+                
+                return ApiResponse.success(successMessage, loginData);
+                
+            } catch (Exception e) {
+                LogManager.logSystemError(MessageConstants.SERVER_ERROR, e.getMessage(), e);
+                return ApiResponse.error(500, MessageConstants.SERVER_ERROR, new LoginResponseDTO());
             }
+        }, userServiceThreadPool);
+    }
+
+    private CompletableFuture<Integer> incrementFailedLoginAttemptsAsync(String userIdentifier) {
+        return CompletableFuture.supplyAsync(() -> {
+            int failedAttempts = incrementFailedLoginAttempts(userIdentifier);
             
-            // Reset failed login attempts on successful login
-            user.setFailedLoginAttempts(0);
-            userRepository.save(user);
-            
-            // Generate JWT token
-            LoginResponseDTO loginData = new LoginResponseDTO();
-            loginData.setAccessToken(JwtUtil.generateToken(user.getUsername(), user.getEmail(), user.getUserId()));
-            loginData.setRefreshToken(JwtUtil.generateRefreshToken(user.getUsername(), user.getEmail(), user.getUserId(), loginRequest.isRememberMe()));
-            
-            String successMessage = loginRequest.isRememberMe() 
-                ? MessageConstants.LOGIN_SUCCESSFUL_REMEMBER_ME 
-                : MessageConstants.LOGIN_SUCCESSFUL;
-            
-            return ApiResponse.success(successMessage, loginData);
-            
-        } catch (Exception e) {
-            String timestamp = LocalDateTime.now().format(formatter);
-            logger.error("[{}] Login system error - Email: {}, Error: {}", 
-                        timestamp, maskEmail(loginRequest.getEmail()), e.getMessage(), e);
-            return ApiResponse.error(500, MessageConstants.SERVER_ERROR);
+            return failedAttempts;
+        }, userServiceThreadPool);
+    }
+
+    @Retry(name = "redis")
+    @CircuitBreaker(name = "redis", fallbackMethod = "fallbackIncrementFailedLoginAttempts")
+    private int incrementFailedLoginAttempts(String userIdentifier) {
+        String key = buildFailedAttemptsKey(userIdentifier);
+        Long result = redisTemplate.opsForValue().increment(key);
+        if (result != null && result == 1) {
+            redisTemplate.expire(key, FAILED_ATTEMPTS_TTL, TimeUnit.SECONDS);
         }
+        LogManager.logSystemError(MessageConstants.HEADER_LOGIN_FAILED, userIdentifier, "Invalid password, attempt: " + result);
+        return result != null ? result.intValue() : 0;
+    }
+    
+    public int fallbackIncrementFailedLoginAttempts(String userIdentifier, Throwable t) {
+        LogManager.logSystemError("REDIS_CONNECTION_FAILED", userIdentifier, 
+                                 "Could not increment failed login attempts. Reason: " + t.getMessage(), t);
+        
+        return 0;
+    }
+  
+    @Retry(name = "redis")
+    @CircuitBreaker(name = "redis", fallbackMethod = "fallbackResetFailedLoginAttempts")
+    private void resetFailedLoginAttempts(String userIdentifier) {
+        String key = buildFailedAttemptsKey(userIdentifier);
+        Boolean result = redisTemplate.delete(key);
+    }
+
+    public void fallbackResetFailedLoginAttempts(String userIdentifier, Throwable t) {
+        LogManager.logSystemError("REDIS_CONNECTION_FAILED", userIdentifier, 
+                                "Could not reset failed login attempts. Reason: " + t.getMessage(), t);
+        
     }
 
     public ApiResponse<LoginResponseDTO> fallbackLogin(LoginRequestDTO loginRequest, Throwable t) {
-        logger.error("Fallback: Could not login for email: {}. Reason: {}", maskEmail(loginRequest.getEmail()), t.getMessage());
+        LogManager.logSystemError("Fallback: Could not login for email", loginRequest.getEmail(), t.getMessage(), t);
         return ApiResponse.error(503, "Service temporarily unavailable. Please try again later.");
     }
 
+    private String buildFailedAttemptsKey(String userIdentifier) {
+        return FAILED_ATTEMPTS_KEY_PREFIX + userIdentifier;
+    }
+
+    /*
+     * SIGNUP FUNCTION
+     */
     @Override
     @Transactional
     @Retry(name = "database")
     @CircuitBreaker(name = "database", fallbackMethod = "fallbackSignUp")
     public CompletableFuture<ApiResponse<Void>> signUp(SignupRequestDTO signupRequest) {
         return CompletableFuture.supplyAsync(() -> {
-            try {
-                // Check database health before proceeding
-                if (!isDatabaseHealthy()) {
-                    String timestamp = LocalDateTime.now().format(formatter);
-                    logger.error("[{}] Registration failed - Database unhealthy - Email: {}", 
-                                timestamp, maskEmail(signupRequest.getEmail()));
-                    return ApiResponse.error(503, "Service temporarily unavailable. Please try again later.");
-                }
-                
+            try {             
                 User existingUser = userRepository.findByEmail(signupRequest.getEmail());
                 if (existingUser != null) {
                     return ApiResponse.error(400, MessageConstants.EMAIL_ALREADY_EXISTS);
@@ -130,16 +180,13 @@ public class UserServiceImpl implements UserService {
                 user.setPasswordHash(passwordEncoder.encode(signupRequest.getPassword()));
                 user.setStatus(User.Status.unverified);
 
-                // Save with retry logic for transient failures
-                User savedUser = saveUserWithRetry(user);
-                
-                // Verify the user was actually saved
-                if (savedUser == null || !verifyUserPersisted(savedUser.getUserId())) {
-                    String timestamp = LocalDateTime.now().format(formatter);
-                    logger.error("[{}] Registration verification failed - UserID: {}, Email: {}", 
-                                timestamp, userId, maskEmail(signupRequest.getEmail()));
+                CompletableFuture<Boolean> isSaved = saveUser(user);
+                if (!isSaved.get()) {
+                    LogManager.logSystemError("Registration verification failed", signupRequest.getEmail(), "UserID not found in database", null);
                     return ApiResponse.error(500, "Registration completed but verification failed. Please contact support.");
                 }
+                
+                emailService.sendOtpEmailAsync(user.getEmail(), user.getUsername(), "<OTP_PLACEHOLDER>");
                 
                 String timestamp = LocalDateTime.now().format(formatter);
                 logger.info("[{}] User registered successfully - UserID: {}, Email: {}", 
@@ -148,50 +195,22 @@ public class UserServiceImpl implements UserService {
                 return ApiResponse.success("Account created successfully. Please verify your email address to activate your account.");
 
             } catch (Exception e) {
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.error("[{}] Registration system error - Email: {}, Error: {}", 
-                            timestamp, maskEmail(signupRequest.getEmail()), e.getMessage(), e);
+                LogManager.logSystemError("Registration system error", signupRequest.getEmail(), e.getMessage(), e);
                 return ApiResponse.error(500, MessageConstants.REGISTRATION_FAILED);
             }
         }, userServiceThreadPool);
     }
-    
-    public CompletableFuture<ApiResponse<Void>> fallbackSignUp(SignupRequestDTO signupRequest, Throwable t) {
-        logger.error("Fallback: Could not sign up for email: {}. Reason: {}", maskEmail(signupRequest.getEmail()), t.getMessage());
-        return CompletableFuture.completedFuture(ApiResponse.error(503, "Service temporarily unavailable. Please try again later."));
+
+    public CompletableFuture<Boolean> saveUser(User user){
+        return CompletableFuture.supplyAsync(() -> {
+            User savedUser = userRepository.save(user);
+            return savedUser != null;
+        }, userServiceThreadPool);
     }
     
-    /**
-     * Save user with retry logic for transient database failures
-     */
-    private User saveUserWithRetry(User user) {
-        int maxRetries = 3;
-        int retryCount = 0;
-        
-        while (retryCount < maxRetries) {
-            try {
-                return userRepository.save(user);
-            } catch (Exception e) {
-                retryCount++;
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.warn("[{}] User save attempt {} failed - UserID: {}, Error: {}", 
-                           timestamp, retryCount, user.getUserId(), e.getMessage());
-                
-                if (retryCount >= maxRetries) {
-                    throw e;
-                }
-                
-                // Wait before retry (exponential backoff)
-                try {
-                    Thread.sleep(100 * retryCount * 2);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("Save operation interrupted", ie);
-                }
-            }
-        }
-        
-        return null;
+    public CompletableFuture<ApiResponse<Void>> fallbackSignUp(SignupRequestDTO signupRequest, Throwable t) {
+        LogManager.logSystemError("Fallback: Could not sign up for email", signupRequest.getEmail(), t.getMessage(), t);
+        return CompletableFuture.completedFuture(ApiResponse.error(503, "Service temporarily unavailable. Please try again later."));
     }
     
     /**
@@ -199,45 +218,21 @@ public class UserServiceImpl implements UserService {
      */
     private boolean verifyUserPersisted(String userId) {
         try {
-            // Force a fresh database query to verify persistence
             User persistedUser = userRepository.findById(userId).orElse(null);
             if (persistedUser == null) {
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.error("[{}] User persistence verification failed - UserID: {} not found in database", 
-                            timestamp, userId);
+                LogManager.logSystemError("User persistence verification failed", userId, "UserID not found in database", null);
                 return false;
             }
             
-            // Additional verification: check if we can read the user by email
             User userByEmail = userRepository.findByEmail(persistedUser.getEmail());
             if (userByEmail == null || !userByEmail.getUserId().equals(userId)) {
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.error("[{}] User email verification failed - UserID: {}, Email: {}", 
-                            timestamp, userId, maskEmail(persistedUser.getEmail()));
+                LogManager.logSystemError("User email verification failed", userId, "Email verification failed", null);
                 return false;
             }
             
             return true;
         } catch (Exception e) {
-            String timestamp = LocalDateTime.now().format(formatter);
-            logger.error("[{}] User verification system error - UserID: {}, Error: {}", 
-                        timestamp, userId, e.getMessage(), e);
-            return false;
-        }
-    }
-
-    /**
-     * Check database connectivity and health
-     */
-    private boolean isDatabaseHealthy() {
-        try {
-            // Simple query to test database connectivity
-            userRepository.count();
-            return true;
-        } catch (Exception e) {
-            String timestamp = LocalDateTime.now().format(formatter);
-            logger.error("[{}] Database health check failed - Error: {}", 
-                        timestamp, e.getMessage(), e);
+            LogManager.logSystemError("User verification system error", userId, e.getMessage(), e);
             return false;
         }
     }
@@ -251,18 +246,15 @@ public class UserServiceImpl implements UserService {
                     .orElseThrow(() -> new RuntimeException(String.format(MessageConstants.USER_NOT_FOUND, userId)));
             return convertToDTO(user);
         } catch (RuntimeException e) {
-            // Re-throw business logic exceptions without logging
             throw e;
         } catch (Exception e) {
-            String timestamp = LocalDateTime.now().format(formatter);
-            logger.error("[{}] Get user by ID system error - UserID: {}, Error: {}", 
-                        timestamp, userId, e.getMessage(), e);
+            LogManager.logSystemError("Get user by ID system error", userId, e.getMessage(), e);
             throw new RuntimeException(MessageConstants.SERVER_ERROR, e);
         }
     }
 
     public UserDTO fallbackGetUserById(String userId, Throwable t) {
-        logger.error("Fallback: Could not get user by ID: {}. Reason: {}", userId, t.getMessage());
+        LogManager.logSystemError("Fallback: Could not get user by ID", userId, t.getMessage(), t);
         throw new RuntimeException("Service temporarily unavailable. Please try again later.", t);
     }
 
@@ -289,16 +281,14 @@ public class UserServiceImpl implements UserService {
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.error("[{}] Update user system error - UserID: {}, Error: {}", 
-                            timestamp, userId, e.getMessage(), e);
+                LogManager.logSystemError("Update user system error", userId, e.getMessage(), e);
                 throw new RuntimeException(MessageConstants.SERVER_ERROR, e);
             }
         }, userServiceThreadPool);
     }
 
     public CompletableFuture<UserDTO> fallbackUpdateUser(String userId, UserDTO userDTO, Throwable t) {
-        logger.error("Fallback: Could not update user: {}. Reason: {}", userId, t.getMessage());
+        LogManager.logSystemError("Fallback: Could not update user", userId, t.getMessage(), t);
         return CompletableFuture.failedFuture(new RuntimeException("Service temporarily unavailable. Please try again later.", t));
     }
 
@@ -325,55 +315,43 @@ public class UserServiceImpl implements UserService {
         return email.charAt(0) + "***@" + email.substring(atIndex + 1);
     }
 
-    // OTP Implementation Methods
     @Override
     @Transactional
-    public CompletableFuture<ApiResponse<Void>> sendOtpForEmailVerification(String email) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                // Check if user exists
+    public ApiResponse<Void> sendOtpForEmailVerification(String email) {
+        try {
+            return userServiceThreadPool.<ApiResponse<Void>>submit(() -> {
                 User user = userRepository.findByEmail(email);
                 if (user == null) {
                     return ApiResponse.error(404, "User not found with this email address. Please sign up first.");
                 }
-                
-                // Check if user is already verified
+
                 if (user.getStatus() == User.Status.normal) {
                     return ApiResponse.error(400, "Email is already verified.");
                 }
-                
-                // Check if user is revoked
+
                 if (user.getStatus() == User.Status.revoked) {
                     return ApiResponse.error(400, "Account has been revoked. Please contact support.");
                 }
-                
-                // Generate 6-digit OTP
+
                 String otpCode = generateOtp();
-                
-                // Store OTP in Valkey cache only (10 minutes TTL)
-                otpCacheService.storeOtp(email, otpCode, "EMAIL_VERIFICATION", 600);
-                
-                // Send OTP email asynchronously
+                boolean otpStored = otpCacheService.storeOtpAsync(email, otpCode, "EMAIL_VERIFICATION", 600).join();
+                if (!otpStored) {
+                    return ApiResponse.error(500, "Failed to store OTP. Please try again.");
+                }
                 emailService.sendOtpEmailAsync(email, user.getUsername(), otpCode)
-                        .exceptionally(throwable -> {
-                            String timestamp = LocalDateTime.now().format(formatter);
-                            logger.error("[{}] Email sending failed - Email: {}, Error: {}", 
-                                        timestamp, maskEmail(email), throwable.getMessage());
-                            return null;
-                        });
-                
+                    .exceptionally(throwable -> {
+                        String timestamp = LocalDateTime.now().format(formatter);
+                        logger.error("[{}] Email sending failed - Email: {}, Error: {}", timestamp, maskEmail(email), throwable.getMessage());
+                        return null;
+                    });
                 String timestamp = LocalDateTime.now().format(formatter);
                 logger.info("[{}] OTP sent successfully - Email: {}", timestamp, maskEmail(email));
-                
                 return ApiResponse.success("OTP sent successfully. Please check your email.");
-                
-            } catch (Exception e) {
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.error("[{}] OTP send failed - Email: {}, Error: {}", 
-                            timestamp, maskEmail(email), e.getMessage(), e);
-                return ApiResponse.error(500, "Failed to send OTP. Please try again.");
-            }
-        }, userServiceThreadPool);
+            }).get();
+        } catch (Exception e) {
+            LogManager.logSystemError("OTP send failed", email, e.getMessage(), e);
+            return ApiResponse.error(500, "Failed to send OTP. Please try again.");
+        }
     }
 
     @Override
@@ -381,14 +359,11 @@ public class UserServiceImpl implements UserService {
     public CompletableFuture<ApiResponse<Void>> verifyOtpAndActivateUser(String email, String otpCode) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // Get OTP from Valkey cache only
                 var cachedOtp = otpCacheService.getOtp(email, "EMAIL_VERIFICATION");
                 
                 if (cachedOtp.isPresent() && cachedOtp.get().equals(otpCode)) {
-                    // OTP found in cache and matches
                     otpCacheService.removeOtp(email, "EMAIL_VERIFICATION");
                     
-                    // Update user status to normal
                     User user = userRepository.findByEmail(email);
                     if (user != null) {
                         user.setStatus(User.Status.normal);
@@ -405,19 +380,67 @@ public class UserServiceImpl implements UserService {
                 }
                 
             } catch (Exception e) {
-                String timestamp = LocalDateTime.now().format(formatter);
-                logger.error("[{}] OTP verification failed - Email: {}, Error: {}", 
-                            timestamp, maskEmail(email), e.getMessage(), e);
+                LogManager.logSystemError("OTP verification failed", email, e.getMessage(), e);
                 return ApiResponse.error(500, "Failed to verify OTP. Please try again.");
             }
         }, userServiceThreadPool);
     }
     
-    /**
-     * Generate a 6-digit OTP
-     */
     private String generateOtp() {
         Random random = new Random();
         return String.format("%06d", random.nextInt(1000000));
+    }
+    
+    private <T> CompletableFuture<T> withRetry(String retryPolicy, Supplier<T> operation) {
+        io.github.resilience4j.retry.Retry retry = retryRegistry.retry(retryPolicy);
+        
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return retry.executeSupplier(operation);
+            } catch (Exception e) {
+                logger.error("Operation failed with retry policy: {}. Error: {}", retryPolicy, e.getMessage(), e);
+                throw e;
+            }
+        }, userServiceThreadPool);
+    }
+    
+
+    
+    private void revokeUserAccount(String userIdentifier) {
+        try {
+            User user = userRepository.findByEmail(userIdentifier);
+            if (user != null) {
+                user.setStatus(User.Status.revoked);
+                userRepository.save(user);
+                logger.warn("User account revoked due to excessive failed login attempts: {}", maskUserIdentifier(userIdentifier));
+            }
+        } catch (Exception e) {
+            logger.error("Failed to revoke user account: {}. Reason: {}", maskUserIdentifier(userIdentifier), e.getMessage(), e);
+        }
+    }
+    
+    private CompletableFuture<Void> resetFailedLoginAttemptsAsync(String userIdentifier) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                resetFailedLoginAttempts(userIdentifier);
+            } catch (Exception e) {
+                logger.error("Failed to reset failed login attempts for user: {}. Reason: {}", maskUserIdentifier(userIdentifier), e.getMessage(), e);
+            }
+        }, userServiceThreadPool);
+    }
+    
+    private String maskUserIdentifier(String userIdentifier) {
+        if (userIdentifier == null || userIdentifier.isEmpty()) {
+            return "***";
+        }
+        // If it looks like an email, mask it
+        if (userIdentifier.contains("@")) {
+            return maskEmail(userIdentifier);
+        }
+        // For userId or username, show first and last character
+        if (userIdentifier.length() <= 2) {
+            return "***";
+        }
+        return userIdentifier.charAt(0) + "***" + userIdentifier.charAt(userIdentifier.length() - 1);
     }
 } 

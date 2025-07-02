@@ -27,8 +27,8 @@ public class UserController {
     // Synchronous endpoints
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<LoginResponseDTO>> login(@Valid @RequestBody LoginRequestDTO loginRequest) {
-        ApiResponse<LoginResponseDTO> response = userService.login(loginRequest);
-        return ResponseEntity.status(response.getCode()).body(response);
+        CompletableFuture<ApiResponse<LoginResponseDTO>> response = userService.login(loginRequest);
+        return ResponseEntity.status(response.getNow(null).getCode()).body(response.getNow(null));
     }
 
     @PostMapping("/sign-up")

@@ -37,6 +37,10 @@ public final class MessageConstants {
     public static final String USER_UPDATE_ERROR = "Failed to update user: %s";
     public static final String USER_DELETE_ERROR = "Failed to delete user: %s";
     public static final String USER_RETRIEVE_ERROR = "Failed to retrieve users: %s";
+    public static final String USER_EMAIL_VERIFICATION_FAILED = "User email verification failed";
+    public static final String EMAIL_VERIFICATION_FAILED = "Email verification failed";
+    public static final String EMAIL_NOT_VERIFIED = "Please verify your email address before logging in.";
+    public static final String ACCOUNT_REVOKED = "Your account has been revoked. Please contact support.";
 
     // Video messages
     public static final String VIDEO_CREATED = "Video created successfully";
@@ -69,4 +73,8 @@ public final class MessageConstants {
     public static final String HISTORY_RETRIEVE_ERROR = "Failed to retrieve user history: %s";
     public static final String HISTORY_ADD_ERROR = "Failed to add video to history: %s";
     public static final String HISTORY_CLEAR_ERROR = "Failed to clear user history: %s";
+
+    //Log Header
+    public static final String HEADER_LOGIN_FAILED = "LOGIN_FAILED";    
+    public static final String HEADER_REDIS_CONNECTION_ERROR = "REDIS_CONNECTION_ERROR";
 } 
