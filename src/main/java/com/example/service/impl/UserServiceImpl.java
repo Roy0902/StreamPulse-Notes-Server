@@ -34,6 +34,7 @@ import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.util.function.Supplier;
+import org.springframework.scheduling.annotation.Async;
 
 @Service
 @RequiredArgsConstructor
