@@ -88,11 +88,11 @@ public class OtpCacheServiceImpl implements OtpCacheService {
     }
     
     @Override
-    public CompletableFuture<Boolean> storeOtpAsync(String email, String otpCode, String purpose, long ttlSeconds) {
+    public CompletableFuture<Boolean> storeOtpAsync(String email, String otpCode, String purpose) {
         String key = buildOtpKey(email, purpose);
         return CompletableFuture.supplyAsync(() -> {
             try {
-                storeOtpWithRetry(key, otpCode, ttlSeconds, email, purpose);
+                storeOtpWithRetry(key, otpCode, defaultTtl, email, purpose);
                 log.info("OTP stored successfully for email: {}, purpose: {}", maskEmail(email), purpose);
                 return true;
             } catch (Exception e) {

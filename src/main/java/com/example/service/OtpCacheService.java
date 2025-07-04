@@ -8,7 +8,7 @@ public interface OtpCacheService {
     /**
      * Store OTP in cache with expiration asynchronously, returns CompletableFuture<Boolean> for success/failure
      */
-    CompletableFuture<Boolean> storeOtpAsync(String email, String otpCode, String purpose, long ttlSeconds);
+    CompletableFuture<Boolean> storeOtpAsync(String email, String otpCode, String purpose);
     
     /**
      * Get OTP from cache

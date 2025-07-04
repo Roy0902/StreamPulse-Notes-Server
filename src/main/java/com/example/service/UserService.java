@@ -14,7 +14,7 @@ public interface UserService {
     UserDTO getUserById(String userId);
     
     // Write operations
-    ApiResponse<Void> sendOtpForEmailVerification(String email);
+    CompletableFuture<ApiResponse<Void>> sendOtpForEmailVerification(String email);
     CompletableFuture<ApiResponse<Void>> signUp(SignupRequestDTO signupRequest);
     CompletableFuture<ApiResponse<Void>> verifyOtpAndActivateUser(String email, String otpCode);
     CompletableFuture<UserDTO> updateUser(String userId, UserDTO userDTO);

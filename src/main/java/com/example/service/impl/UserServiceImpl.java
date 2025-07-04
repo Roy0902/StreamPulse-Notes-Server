@@ -14,6 +14,8 @@ import com.example.service.UserService;
 import lombok.RequiredArgsConstructor;
 import com.github.rholder.fauxflake.IdGenerators;
 import com.github.rholder.fauxflake.api.IdGenerator;
+import com.mysql.cj.log.Log;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -60,7 +62,6 @@ public class UserServiceImpl implements UserService {
     /*
      * LOGIN FUNCTION
      */
-    @Async("userServiceThreadPool")
     @Override
     @Retry(name = "database")
     @CircuitBreaker(name = "database", fallbackMethod = "fallbackLogin")
@@ -140,7 +141,7 @@ public class UserServiceImpl implements UserService {
     @CircuitBreaker(name = "redis", fallbackMethod = "fallbackResetFailedLoginAttempts")
     private void resetFailedLoginAttempts(String userIdentifier) {
         String key = buildFailedAttemptsKey(userIdentifier);
-        Boolean result = redisTemplate.delete(key);
+        redisTemplate.delete(key);
     }
 
     public void fallbackResetFailedLoginAttempts(String userIdentifier, Throwable t) {
@@ -170,7 +171,7 @@ public class UserServiceImpl implements UserService {
             try {             
                 User existingUser = userRepository.findByEmail(signupRequest.getEmail());
                 if (existingUser != null) {
-                    return ApiResponse.error(400, MessageConstants.EMAIL_ALREADY_EXISTS);
+                    return ApiResponse.error(409, MessageConstants.EMAIL_ALREADY_EXISTS);
                 }
                 
                 User user = new User();
@@ -181,12 +182,18 @@ public class UserServiceImpl implements UserService {
                 user.setPasswordHash(passwordEncoder.encode(signupRequest.getPassword()));
                 user.setStatus(User.Status.unverified);
 
-                CompletableFuture<Boolean> isSaved = saveUser(user);
-                if (!isSaved.get()) {
+                boolean isSaved = (userRepository.saveUser(user) != null);
+                if (!isSaved) {
                     LogManager.logSystemError("Registration verification failed", signupRequest.getEmail(), "UserID not found in database", null);
-                    return ApiResponse.error(500, "Registration completed but verification failed. Please contact support.");
+                    return ApiResponse.error(503, "Service temporarily unavailable. Please try it later.");
                 }
                 
+                boolean isPersisted = verifyUserPersisted(userId);
+                if (!isPersisted) {
+                    LogManager.logSystemError("User persistence verification failed", user.getUserId(), "UserID not found in database", null);
+                    return ApiResponse.error(503, "Registration completed but verification failed. Please contact support.");
+                }
+
                 emailService.sendOtpEmailAsync(user.getEmail(), user.getUsername(), "<OTP_PLACEHOLDER>");
                 
                 String timestamp = LocalDateTime.now().format(formatter);
@@ -201,13 +208,6 @@ public class UserServiceImpl implements UserService {
             }
         }, userServiceThreadPool);
     }
-
-    public CompletableFuture<Boolean> saveUser(User user){
-        return CompletableFuture.supplyAsync(() -> {
-            User savedUser = userRepository.save(user);
-            return savedUser != null;
-        }, userServiceThreadPool);
-    }
     
     public CompletableFuture<ApiResponse<Void>> fallbackSignUp(SignupRequestDTO signupRequest, Throwable t) {
         LogManager.logSystemError("Fallback: Could not sign up for email", signupRequest.getEmail(), t.getMessage(), t);
@@ -216,6 +216,7 @@ public class UserServiceImpl implements UserService {
     
     /**
      * Verify that the user was actually persisted in the database
+     * Only for the sign-up process
      */
     private boolean verifyUserPersisted(String userId) {
         try {
@@ -259,6 +260,9 @@ public class UserServiceImpl implements UserService {
         throw new RuntimeException("Service temporarily unavailable. Please try again later.", t);
     }
 
+    /*
+     * UPDATE USER FUNCTION
+     */
     @Override
     @Transactional
     @Retry(name = "database")
@@ -318,41 +322,44 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public ApiResponse<Void> sendOtpForEmailVerification(String email) {
-        try {
-            return userServiceThreadPool.<ApiResponse<Void>>submit(() -> {
+    @Retry(name = "database")
+    @CircuitBreaker(name = "database", fallbackMethod = "fallbackSendOtpForEmailVerification")
+    public CompletableFuture<ApiResponse<Void>> sendOtpForEmailVerification(String email) {
+        return CompletableFuture.supplyAsync(() -> {
+
+            try {
                 User user = userRepository.findByEmail(email);
                 if (user == null) {
-                    return ApiResponse.error(404, "User not found with this email address. Please sign up first.");
+                    LogManager.logSystemError("Email verification failed", email, "User not found", null);
+                    return ApiResponse.error(404, "User with email " + email + " not found");
                 }
 
-                if (user.getStatus() == User.Status.normal) {
-                    return ApiResponse.error(400, "Email is already verified.");
-                }
-
-                if (user.getStatus() == User.Status.revoked) {
-                    return ApiResponse.error(400, "Account has been revoked. Please contact support.");
+                if (user.getStatus() != User.Status.unverified) {
+                    LogManager.logSystemError("Email verification failed", email, "User already verified", null);
+                    return ApiResponse.error(403, "User with email " + email + " is already verified");
                 }
 
                 String otpCode = generateOtp();
-                boolean otpStored = otpCacheService.storeOtpAsync(email, otpCode, "EMAIL_VERIFICATION", 600).join();
-                if (!otpStored) {
-                    return ApiResponse.error(500, "Failed to store OTP. Please try again.");
-                }
-                emailService.sendOtpEmailAsync(email, user.getUsername(), otpCode)
-                    .exceptionally(throwable -> {
-                        String timestamp = LocalDateTime.now().format(formatter);
-                        logger.error("[{}] Email sending failed - Email: {}, Error: {}", timestamp, maskEmail(email), throwable.getMessage());
-                        return null;
-                    });
+                CompletableFuture<Boolean> isSuccess = otpCacheService.storeOtpAsync(email, otpCode, "EMAIL_VERIFICATION");
+
                 String timestamp = LocalDateTime.now().format(formatter);
-                logger.info("[{}] OTP sent successfully - Email: {}", timestamp, maskEmail(email));
-                return ApiResponse.success("OTP sent successfully. Please check your email.");
-            }).get();
-        } catch (Exception e) {
-            LogManager.logSystemError("OTP send failed", email, e.getMessage(), e);
-            return ApiResponse.error(500, "Failed to send OTP. Please try again.");
-        }
+                logger.info("[{}] Email verification OTP sent - Email: {}", timestamp, maskEmail(email));
+        
+                isSuccess.thenAccept(success -> {
+                    if (success) {
+                        emailService.sendOtpEmailAsync(email, user.getUsername(), otpCode);
+                    } else {
+                        LogManager.logSystemError("OTP storage failed", email, "Failed to store OTP in cache", null);
+                    }
+                });
+
+                return ApiResponse.success("OTP sent successfully. Please check your email to verify your account.");
+
+            } catch (Exception e) {
+                LogManager.logSystemError("Email verification system error", email, e.getMessage(), e);
+                return ApiResponse.error(500, "Failed to send OTP. Please try again later.");
+            }
+        }, userServiceThreadPool);
     }
 
     @Override
@@ -368,7 +375,6 @@ public class UserServiceImpl implements UserService {
                     User user = userRepository.findByEmail(email);
                     if (user != null) {
                         user.setStatus(User.Status.normal);
-                        user.setFailedLoginAttempts(0); // Reset failed attempts
                         userRepository.save(user);
                     }
                     
