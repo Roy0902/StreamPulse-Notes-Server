@@ -12,23 +12,17 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Slf4j
 public class ThreadPoolMonitor {
 
-    private final ExecutorService userRegistrationThreadPool;
-    private final ExecutorService otpThreadPool;
-    private final ExecutorService loginThreadPool;
-    private final ExecutorService userOperationsThreadPool;
+    private final ExecutorService userServiceThreadPool;
     private final ExecutorService emailServiceThreadPool;
+    private final ExecutorService redisServiceThreadPool;
 
     public ThreadPoolMonitor(
-            @Qualifier("userRegistrationThreadPool") ExecutorService userRegistrationThreadPool,
-            @Qualifier("otpThreadPool") ExecutorService otpThreadPool,
-            @Qualifier("loginThreadPool") ExecutorService loginThreadPool,
-            @Qualifier("userOperationsThreadPool") ExecutorService userOperationsThreadPool,
-            @Qualifier("emailServiceThreadPool") ExecutorService emailServiceThreadPool) {
-        this.userRegistrationThreadPool = userRegistrationThreadPool;
-        this.otpThreadPool = otpThreadPool;
-        this.loginThreadPool = loginThreadPool;
-        this.userOperationsThreadPool = userOperationsThreadPool;
-        this.emailServiceThreadPool = emailServiceThreadPool;
+            @Qualifier("userServiceThreadPool") ExecutorService userServiceThreadPool,
+            @Qualifier("emailServiceThreadPool") ExecutorService emailServiceThreadPool,
+            @Qualifier("redisServiceThreadPool") ExecutorService redisServiceThreadPool) {
+            this.userServiceThreadPool = userServiceThreadPool;
+            this.emailServiceThreadPool = emailServiceThreadPool;
+            this.redisServiceThreadPool = redisServiceThreadPool;
     }
 
     /**
@@ -37,11 +31,9 @@ public class ThreadPoolMonitor {
     @Scheduled(fixedRate = 300000) // 5 minutes
     public void logThreadPoolMetrics() {
         log.info("=== Thread Pool Metrics ===");
-        logThreadPoolStatus("User Registration", userRegistrationThreadPool);
-        logThreadPoolStatus("OTP Operations", otpThreadPool);
-        logThreadPoolStatus("Login Operations", loginThreadPool);
-        logThreadPoolStatus("User Operations", userOperationsThreadPool);
+        logThreadPoolStatus("User Service", userServiceThreadPool);
         logThreadPoolStatus("Email Service", emailServiceThreadPool);
+        logThreadPoolStatus("Redis Service", redisServiceThreadPool);
         log.info("==========================");
     }
 
@@ -64,11 +56,9 @@ public class ThreadPoolMonitor {
      * Get thread pool health status
      */
     public boolean isThreadPoolHealthy() {
-        return isThreadPoolHealthy(userRegistrationThreadPool) &&
-               isThreadPoolHealthy(otpThreadPool) &&
-               isThreadPoolHealthy(loginThreadPool) &&
-               isThreadPoolHealthy(userOperationsThreadPool) &&
-               isThreadPoolHealthy(emailServiceThreadPool);
+        return isThreadPoolHealthy(userServiceThreadPool) &&
+               isThreadPoolHealthy(emailServiceThreadPool) &&
+               isThreadPoolHealthy(redisServiceThreadPool);
     }
 
     private boolean isThreadPoolHealthy(ExecutorService executor) {

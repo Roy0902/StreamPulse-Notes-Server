@@ -17,9 +17,6 @@ public class User {
     @Column(name = "user_id", length = 36)
     private String userId;
 
-    @Version
-    private Long version;
-
     @Column(name = "username", nullable = false, unique = true, length = 50)
     private String username;
 

@@ -5,6 +5,7 @@ import com.example.dto.LoginRequestDTO;
 import com.example.dto.LoginResponseDTO;
 import com.example.dto.SignupRequestDTO;
 import com.example.dto.UserDTO;
+import com.example.common.Result;
 
 import java.util.concurrent.CompletableFuture;
 
